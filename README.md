@@ -1,0 +1,114 @@
+# ClipFlow 抖音内容提取工具
+
+一个功能等价、品牌微调的抖音内容提取页面。前端是单页 `index.html`，后端是 Node Express，支持公开抖音链接解析、无水印视频下载、封面下载、BGM 下载、FFmpeg 生成 MP3、可选云转写和 ZIP 打包。
+
+## 运行
+
+```bash
+npm.cmd install
+npm.cmd start
+```
+
+打开 `http://localhost:3000`。
+
+Windows PowerShell 默认可能禁止 `npm.ps1`，因此建议使用 `npm.cmd`。
+
+如果你的 `.env` 里设置了 `PORT=3019`，本地测试地址就是 `http://localhost:3019`。
+
+## 解析 Provider 配置
+
+后端会按 `DOUYIN_PROVIDERS` 的顺序依次尝试 Provider：
+
+```env
+DOUYIN_PROVIDERS=tikhub,xinyew,mxin,jxcxin,devtool,makuo,mujie
+```
+
+当前内置 Provider：
+
+- `xinyew`：免费接口，可能受可用性和证书状态影响。
+- `mxin`：免费接口，适合做兜底测试。
+- `jxcxin`：免费接口，当前稳定性一般。
+- `devtool`：免费接口，当前稳定性一般。
+- `tikhub`：需要 `TIKHUB_API_KEY`。端点来自 GitHub 项目 `TikHub/TikHub-Multi-Functional-Downloader`，优先调用 `/api/v1/douyin/app/v3/fetch_one_video_by_share_url`，再用 web 端点兜底。
+- `makuo`：需要 `MAKUO_TOKEN`。
+- `mujie`：需要 `MUJIE_KEY`。
+
+缺少密钥的 Token Provider 会自动跳过。生产环境建议优先购买并配置一个稳定 Provider，然后把它放在 `DOUYIN_PROVIDERS` 第一位。
+
+TikHub 示例：
+
+```env
+TIKHUB_BASE_URL=https://api.tikhub.io
+TIKHUB_API_KEY=你的_TikHub_API_Key
+DOUYIN_PROVIDERS=tikhub,xinyew,mxin,jxcxin,devtool
+```
+
+## 转写配置
+
+复制 `.env.example` 为 `.env` 后按需配置：
+
+```env
+TRANSCRIPTION_API_KEY=你的转写服务密钥
+TRANSCRIPTION_BASE_URL=https://api.openai.com/v1/audio/transcriptions
+TRANSCRIPTION_MODEL=whisper-1
+TRANSCRIPTION_LANGUAGE=zh
+
+# 可选：AI 文案改写，OpenAI 兼容 Chat Completions 接口。
+# 不填 REWRITE_API_KEY 时，会尝试复用 TRANSCRIPTION_API_KEY。
+REWRITE_API_KEY=
+REWRITE_BASE_URL=https://api.siliconflow.cn/v1/chat/completions
+REWRITE_MODEL=Qwen/Qwen2.5-7B-Instruct
+```
+
+不配置转写时，视频、封面、BGM、MP3 和 ZIP 下载仍可使用。
+
+## API
+
+- `GET /api/health`：查看 Provider、转写和运行限制配置状态。
+- `GET /api/providers/test?url=抖音链接`：逐个测试 Provider，返回成功/失败原因，不执行下载和转码。
+- `POST /api/extract`：提交 `{ "text": "抖音分享文案或链接" }` 或 `{ "urls": ["https://v.douyin.com/..."] }`。
+- `GET /api/jobs/:id`：查询任务状态。
+- `GET /api/download/:assetId`：下载单个文件，追加 `?inline=1` 可用于预览。
+- `GET /api/jobs/:id/archive`：下载任务内全部可用文件的 ZIP。
+
+## 手动支付二维码
+
+当前支付模式是 `PAYMENT_PROVIDER=manual`，用户点击标准版或高级版的“立即开通”后，会创建一条待支付订单，并在页面里展示微信和支付宝二维码。
+
+默认二维码文件：
+
+- 微信：`assets/payments/wechat-qr.svg`
+- 支付宝：`assets/payments/alipay-qr.svg`
+
+把这两个文件替换为你自己的收款码图片即可。也可以在 `.env` 中配置外部图片地址：
+
+```env
+PAYMENT_PROVIDER=manual
+PAYMENT_RECEIVER_NAME=你的收款名称
+PAYMENT_WECHAT_QR_URL=/assets/payments/wechat-qr.svg
+PAYMENT_ALIPAY_QR_URL=/assets/payments/alipay-qr.svg
+```
+
+手动收款模式不会自动升级套餐。付款后需要管理员在“用户管理”里把用户套餐改为标准版或高级版。后续接微信支付 / 支付宝商户接口时，再把支付回调接上自动升级。
+
+## 使用说明
+
+第三方解析服务的稳定性和使用条款以服务方为准。请仅处理本人拥有授权或允许下载的公开内容。
+
+## 商用 MVP
+
+本地版本已经加入套餐、额度、账单记录、用户中心、管理员用户管理和合规入口。正式商用上线前，请阅读 [`COMMERCIAL_LAUNCH.md`](./COMMERCIAL_LAUNCH.md)，并至少完成：
+
+当前会员规则：
+
+- 游客体验期：2 次免注册，暂不支持批量。
+- 免费版：每日 5 次、每月 150 次、单次最多 2 个链接。
+- 标准版：19.9 元/月，每月 1500 次、无每日限制、单次最多 5 个链接。
+- 高级版：99 元/月，每月 10000 次、单次最多 5 个链接、优先解析通道。
+
+- 把 `data/users.json` 迁移到 PostgreSQL。
+- 把长任务迁移到 Redis 队列。
+- 把视频、封面、MP3、ZIP 迁移到对象存储。
+- 接入微信支付、支付宝或 Stripe，并实现支付回调验签。
+- 替换为明确允许商用的稳定解析 Provider。
+- 修改 `.env` 中的管理员账号、`AUTH_SECRET`、域名和生产密钥。

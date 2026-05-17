@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="360" viewBox="0 0 360 360" role="img" aria-label="微信收款码占位图">
+  <rect width="360" height="360" fill="#f6fffb"/>
+  <rect x="18" y="18" width="324" height="324" rx="24" fill="#fff" stroke="#12b76a" stroke-width="6"/>
+  <g fill="#12b76a">
+    <rect x="48" y="48" width="88" height="88" rx="8"/>
+    <rect x="224" y="48" width="88" height="88" rx="8"/>
+    <rect x="48" y="224" width="88" height="88" rx="8"/>
+    <rect x="160" y="50" width="24" height="24"/>
+    <rect x="160" y="98" width="24" height="52"/>
+    <rect x="196" y="158" width="24" height="24"/>
+    <rect x="238" y="158" width="74" height="24"/>
+    <rect x="160" y="206" width="52" height="24"/>
+    <rect x="244" y="206" width="24" height="52"/>
+    <rect x="196" y="268" width="24" height="44"/>
+    <rect x="244" y="286" width="68" height="26"/>
+  </g>
+  <g fill="#fff">
+    <rect x="70" y="70" width="44" height="44" rx="5"/>
+    <rect x="246" y="70" width="44" height="44" rx="5"/>
+    <rect x="70" y="246" width="44" height="44" rx="5"/>
+  </g>
+  <text x="180" y="182" text-anchor="middle" font-family="Arial, 'Microsoft YaHei', sans-serif" font-size="20" font-weight="700" fill="#0f5132">微信收款码</text>
+  <text x="180" y="336" text-anchor="middle" font-family="Arial, 'Microsoft YaHei', sans-serif" font-size="14" fill="#667085">替换 assets/payments/wechat-qr.svg 为你的二维码</text>
+</svg>
