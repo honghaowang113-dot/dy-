@@ -112,3 +112,29 @@ PAYMENT_ALIPAY_QR_URL=/assets/payments/alipay-qr.svg
 - 接入微信支付、支付宝或 Stripe，并实现支付回调验签。
 - 替换为明确允许商用的稳定解析 Provider。
 - 修改 `.env` 中的管理员账号、`AUTH_SECRET`、域名和生产密钥。
+
+## Public Deployment Quick Path
+
+1. GitHub publish:
+   - Create an empty repository on GitHub (no README).
+   - Add remote and push:
+```bash
+git remote add origin https://github.com/<owner>/<repo>.git
+git push -u origin master
+```
+
+2. Production environment:
+   - Use `.env.example` as template.
+   - Set `NODE_ENV=production`.
+   - Set `AUTH_SECRET` to a strong random secret.
+   - Set `PUBLIC_SITE_URL=https://www.yourdomain.com`.
+
+3. Domain + HTTPS:
+   - Buy domain from Cloudflare/Namecheap/Aliyun/Tencent Cloud.
+   - Point `A` record to your server IP (or `CNAME` to your platform URL).
+   - Enable HTTPS certificate (Let's Encrypt or platform managed SSL).
+
+4. Search engine indexing:
+   - Verify `https://www.yourdomain.com/robots.txt` is accessible.
+   - Verify `https://www.yourdomain.com/sitemap.xml` is accessible.
+   - Submit sitemap to Google Search Console and Bing Webmaster.

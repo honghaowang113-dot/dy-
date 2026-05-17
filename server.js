@@ -24,6 +24,7 @@ const SESSION_COOKIE = 'clipflow_session';
 const GUEST_COOKIE = 'clipflow_guest';
 const SESSION_TTL_MS = Number(process.env.SESSION_TTL_HOURS || 168) * 60 * 60 * 1000;
 const GUEST_TTL_MS = Number(process.env.GUEST_TTL_DAYS || 365) * 24 * 60 * 60 * 1000;
+const PUBLIC_SITE_URL = normalizePublicSiteUrl(process.env.PUBLIC_SITE_URL || process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}`);
 const AUTH_SECRET = process.env.AUTH_SECRET || randomUUID();
 const DEFAULT_ADMIN_EMAIL = (process.env.DEFAULT_ADMIN_EMAIL || 'admin@clipflow.local').toLowerCase();
 const DEFAULT_ADMIN_PASSWORD = process.env.DEFAULT_ADMIN_PASSWORD || 'Admin@123456';
@@ -118,6 +119,32 @@ const app = express();
 app.use(express.json({ limit: '128kb' }));
 app.use('/api', rateLimit);
 app.use(express.static(__dirname));
+
+app.get('/robots.txt', (_req, res) => {
+  res.type('text/plain').send(
+    [
+      'User-agent: *',
+      'Allow: /',
+      '',
+      `Sitemap: ${PUBLIC_SITE_URL}/sitemap.xml`
+    ].join('\n')
+  );
+});
+
+app.get('/sitemap.xml', (_req, res) => {
+  const now = new Date().toISOString();
+  const urls = ['/', '/#extract', '/#plans', '/#faq'];
+  const xml = [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+    ...urls.map((path) => {
+      const loc = `${PUBLIC_SITE_URL}${path}`;
+      return `<url><loc>${escapeXml(loc)}</loc><lastmod>${now}</lastmod><changefreq>daily</changefreq><priority>0.8</priority></url>`;
+    }),
+    '</urlset>'
+  ].join('');
+  res.type('application/xml').send(xml);
+});
 
 app.post('/api/auth/register', async (req, res) => {
   try {
@@ -2713,6 +2740,26 @@ function firstText(...values) {
     if (typeof value === 'number') return String(value);
   }
   return '';
+}
+
+function normalizePublicSiteUrl(value) {
+  const fallback = `http://localhost:${PORT}`;
+  try {
+    const url = new URL(String(value || fallback));
+    if (!/^https?:$/i.test(url.protocol)) return fallback;
+    return `${url.protocol}//${url.host}`.replace(/\/+$/, '');
+  } catch {
+    return fallback;
+  }
+}
+
+function escapeXml(value) {
+  return String(value || '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&apos;');
 }
 
 function firstUrl(...values) {
