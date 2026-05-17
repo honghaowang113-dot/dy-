@@ -3,5 +3,6 @@ node_modules/
 .env
 data/
 tmp/
+dist/
 npm-debug.log*
 .DS_Store
