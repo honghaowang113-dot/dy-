@@ -1,7 +1,9 @@
 import 'dotenv/config';
 
+import { AlipaySdk } from 'alipay-sdk';
 import archiver from 'archiver';
 import express from 'express';
+import QRCode from 'qrcode';
 import { spawn } from 'node:child_process';
 import { createHmac, randomBytes, randomInt, randomUUID, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import { createWriteStream, createReadStream } from 'node:fs';
@@ -37,6 +39,14 @@ const PAYMENT_WEBHOOK_SECRET = process.env.PAYMENT_WEBHOOK_SECRET || '';
 const PAYMENT_RECEIVER_NAME = process.env.PAYMENT_RECEIVER_NAME || 'ClipFlow';
 const PAYMENT_WECHAT_QR_URL = process.env.PAYMENT_WECHAT_QR_URL || '/assets/payments/wechat-qr.jpg';
 const PAYMENT_ALIPAY_QR_URL = process.env.PAYMENT_ALIPAY_QR_URL || '/assets/payments/alipay-qr.jpg';
+const ALIPAY_APP_ID = String(process.env.ALIPAY_APP_ID || '').trim();
+const ALIPAY_PRIVATE_KEY = String(process.env.ALIPAY_PRIVATE_KEY || '').trim();
+const ALIPAY_PUBLIC_KEY = String(process.env.ALIPAY_PUBLIC_KEY || '').trim();
+const ALIPAY_GATEWAY = String(process.env.ALIPAY_GATEWAY || 'https://openapi.alipay.com/gateway.do').trim();
+const ALIPAY_NOTIFY_URL = String(
+  process.env.ALIPAY_NOTIFY_URL
+  || (PAYMENT_WEBHOOK_SECRET ? `${PUBLIC_SITE_URL}/api/payments/webhook?token=${encodeURIComponent(PAYMENT_WEBHOOK_SECRET)}` : '')
+).trim();
 const STORAGE_PROVIDER = process.env.STORAGE_PROVIDER || 'local';
 const QUEUE_PROVIDER = process.env.QUEUE_PROVIDER || 'in-process';
 const PLAN_CATALOG = Object.freeze({
@@ -110,6 +120,7 @@ const jobs = new Map();
 const assets = new Map();
 const rateWindows = new Map();
 const smsCodes = new Map();
+let alipayClient = null;
 
 await mkdir(TMP_ROOT, { recursive: true });
 await mkdir(DATA_ROOT, { recursive: true });
@@ -395,12 +406,37 @@ app.post('/api/billing/checkout', async (req, res) => {
   target.billingRecords = normalizeBillingRecords(target.billingRecords);
   target.billingRecords.unshift(payment);
   target.updatedAt = now;
+  const provider = PAYMENT_PROVIDER === 'alipay' ? 'alipay' : 'manual';
+  payment.provider = provider;
+  target.billingRecords[0] = payment;
+
+  let checkoutUrl = null;
+  let manualPayment = null;
+
+  if (provider === 'alipay') {
+    if (!isAlipayConfigured()) {
+      return res.status(503).json({ error: '支付宝支付未配置完成，请先配置 ALIPAY_APP_ID / ALIPAY_PRIVATE_KEY / ALIPAY_PUBLIC_KEY / PAYMENT_WEBHOOK_SECRET。' });
+    }
+    try {
+      const precreate = await createAlipayPrecreateOrder({ payment, plan, user: target });
+      checkoutUrl = precreate.qrCode || null;
+      manualPayment = alipayCheckoutView(payment, plan, precreate);
+      payment.channel = 'alipay';
+      payment.updatedAt = new Date().toISOString();
+      target.billingRecords[0] = payment;
+    } catch (error) {
+      return res.status(502).json({ error: `支付宝下单失败：${error.message || '未知错误'}` });
+    }
+  } else {
+    manualPayment = manualPaymentView(payment, plan);
+  }
+
   await writeUserDb(db);
   const autoUpgradeEnabled = Boolean(PAYMENT_WEBHOOK_SECRET);
   res.status(201).json({
     payment,
-    checkoutUrl: null,
-    manualPayment: manualPaymentView(payment, plan),
+    checkoutUrl,
+    manualPayment,
     autoUpgrade: {
       enabled: autoUpgradeEnabled,
       statusUrl: `/api/billing/orders/${payment.id}`,
@@ -433,6 +469,9 @@ app.get('/api/billing/orders/:paymentId', async (req, res) => {
 app.post('/api/payments/webhook', async (req, res) => {
   if (!isPaymentWebhookAuthorized(req)) {
     return res.status(401).type('text/plain').send('unauthorized');
+  }
+  if (isLikelyAlipayNotify(req) && !verifyAlipayNotifySignature(req)) {
+    return res.status(401).type('text/plain').send('invalid alipay sign');
   }
   const payload = normalizeWebhookPayload(req);
   if (!payload.orderId) {
@@ -618,6 +657,7 @@ app.get('/api/health', (_req, res) => {
       enabled: COMMERCIAL_MODE,
       paymentProvider: PAYMENT_PROVIDER,
       paymentAutoUpgrade: Boolean(PAYMENT_WEBHOOK_SECRET),
+      alipayConfigured: isAlipayConfigured(),
       storageProvider: STORAGE_PROVIDER,
       queueProvider: QUEUE_PROVIDER,
       database: process.env.DATABASE_URL ? 'postgres-configured' : 'local-json',
@@ -1508,6 +1548,69 @@ function planCatalogView() {
   }));
 }
 
+function normalizePemKey(raw, type = 'PRIVATE KEY') {
+  const text = String(raw || '').trim();
+  if (!text) return '';
+  if (text.includes('BEGIN')) return text;
+  const cleaned = text.replace(/\s+/g, '');
+  const rows = cleaned.match(/.{1,64}/g) || [];
+  return `-----BEGIN ${type}-----\n${rows.join('\n')}\n-----END ${type}-----`;
+}
+
+function isAlipayConfigured() {
+  return Boolean(ALIPAY_APP_ID && ALIPAY_PRIVATE_KEY && ALIPAY_PUBLIC_KEY && PAYMENT_WEBHOOK_SECRET);
+}
+
+function getAlipayClient() {
+  if (alipayClient) return alipayClient;
+  if (!ALIPAY_APP_ID) {
+    throw new Error('ALIPAY_APP_ID 未配置');
+  }
+  const privateKeyPem = normalizePemKey(ALIPAY_PRIVATE_KEY, 'PRIVATE KEY');
+  const alipayPublicKeyPem = normalizePemKey(ALIPAY_PUBLIC_KEY, 'PUBLIC KEY');
+  alipayClient = new AlipaySdk({
+    appId: ALIPAY_APP_ID,
+    privateKey: privateKeyPem,
+    alipayPublicKey: alipayPublicKeyPem,
+    gateway: ALIPAY_GATEWAY,
+    keyType: 'PKCS8',
+    timeout: 15000
+  });
+  return alipayClient;
+}
+
+async function createAlipayPrecreateOrder({ payment, plan }) {
+  const client = getAlipayClient();
+  const amount = Number(payment.amount || plan.priceMonthly || 0).toFixed(2);
+  const subject = `ClipFlow-${plan.name}-${payment.id.slice(0, 8).toUpperCase()}`;
+  const response = await client.exec('alipay.trade.precreate', {
+    notifyUrl: ALIPAY_NOTIFY_URL,
+    bizContent: {
+      outTradeNo: payment.id,
+      totalAmount: amount,
+      subject,
+      body: `${plan.name} membership`,
+      timeoutExpress: '30m'
+    }
+  });
+  const payload = response?.alipayTradePrecreateResponse || response?.alipay_trade_precreate_response || response || {};
+  if (payload.code !== '10000') {
+    const detail = payload.subMsg || payload.msg || payload.code || 'unknown';
+    throw new Error(detail);
+  }
+  const qrCode = String(payload.qrCode || payload.qr_code || '').trim();
+  if (!qrCode) {
+    throw new Error('支付宝未返回二维码链接');
+  }
+  const qrDataUrl = await QRCode.toDataURL(qrCode, { margin: 1, width: 520 });
+  return {
+    qrCode,
+    qrDataUrl,
+    outTradeNo: payment.id,
+    tradeNo: String(payload.tradeNo || payload.trade_no || '')
+  };
+}
+
 function manualPaymentView(payment, plan) {
   if (PAYMENT_PROVIDER !== 'manual') return null;
   return {
@@ -1540,6 +1643,29 @@ function manualPaymentView(payment, plan) {
   };
 }
 
+function alipayCheckoutView(payment, plan, precreate) {
+  return {
+    provider: 'alipay',
+    receiverName: PAYMENT_RECEIVER_NAME,
+    amount: payment.amount,
+    currency: payment.currency,
+    planId: plan.id,
+    planName: plan.name,
+    orderId: payment.id,
+    orderNote: payment.orderNote || `ClipFlow-${payment.id.slice(0, 8).toUpperCase()}`,
+    channels: [
+      {
+        id: 'alipay',
+        label: '支付宝',
+        qrUrl: precreate.qrDataUrl,
+        enabled: true
+      }
+    ],
+    autoUpgradeEnabled: Boolean(PAYMENT_WEBHOOK_SECRET),
+    notice: '请使用支付宝扫码支付。支付成功后系统会自动升级套餐。'
+  };
+}
+
 function isPaymentWebhookAuthorized(req) {
   if (!PAYMENT_WEBHOOK_SECRET) return false;
   const tokenFromQuery = String(req.query?.token || '');
@@ -1547,6 +1673,25 @@ function isPaymentWebhookAuthorized(req) {
   const tokenFromHeader = String(req.headers['x-payment-secret'] || req.headers['x-webhook-secret'] || '');
   const supplied = tokenFromHeader || tokenFromBody || tokenFromQuery;
   return supplied === PAYMENT_WEBHOOK_SECRET;
+}
+
+function isLikelyAlipayNotify(req) {
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  return PAYMENT_PROVIDER === 'alipay'
+    || Boolean(body.sign)
+    || Boolean(body.trade_status)
+    || Boolean(body.out_trade_no);
+}
+
+function verifyAlipayNotifySignature(req) {
+  try {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    if (!body.sign || !body.sign_type) return false;
+    const client = getAlipayClient();
+    return client.checkNotifySignV2(body) || client.checkNotifySign(body, true);
+  } catch {
+    return false;
+  }
 }
 
 function pickWebhookField(obj = {}, keys = []) {
@@ -1581,7 +1726,7 @@ function normalizeWebhookPayload(req) {
   const amount = Number(amountRaw || 0);
   const tradeNo = pickWebhookField(merged, ['tradeNo', 'trade_no', 'transaction_id', 'provider_trade_no']);
   const channel = pickWebhookField(merged, ['channel', 'type', 'pay_type', 'payment_channel']);
-  const provider = pickWebhookField(merged, ['provider']) || PAYMENT_PROVIDER;
+  const provider = pickWebhookField(merged, ['provider']) || (merged.trade_status ? 'alipay' : PAYMENT_PROVIDER);
   return {
     orderId,
     status,

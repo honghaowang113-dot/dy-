@@ -5242,7 +5242,7 @@
       }
 
       function apiUrl(path) {
-        if (/^https?:\/\//i.test(path)) return path;
+        if (/^(https?:\/\/|data:|blob:)/i.test(path)) return path;
         return `${API_BASE}${path}`;
       }
 

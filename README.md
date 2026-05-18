@@ -143,3 +143,23 @@ git push -u origin master
    - Verify `https://www.yourdomain.com/robots.txt` is accessible.
    - Verify `https://www.yourdomain.com/sitemap.xml` is accessible.
    - Submit sitemap to Google Search Console and Bing Webmaster.
+
+## Alipay Auto-Upgrade Setup (Production)
+
+Use these environment variables to enable real Alipay payment + automatic plan upgrade:
+
+```env
+PAYMENT_PROVIDER=alipay
+PAYMENT_WEBHOOK_SECRET=replace_with_long_random_secret
+ALIPAY_APP_ID=your_app_id
+ALIPAY_PRIVATE_KEY=your_rsa2_private_key_base64_or_pem
+ALIPAY_PUBLIC_KEY=alipay_public_key_base64_or_pem
+ALIPAY_GATEWAY=https://openapi.alipay.com/gateway.do
+ALIPAY_NOTIFY_URL=https://your-domain/api/payments/webhook?token=PAYMENT_WEBHOOK_SECRET
+```
+
+After updating `.env`, restart:
+
+```bash
+env PM2_HOME=/root/.pm2 pm2 restart clipflow --update-env
+```
