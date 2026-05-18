@@ -1240,7 +1240,7 @@
       .payment-qr-frame img {
         display: block;
         width: 100%;
-        aspect-ratio: 1;
+        max-height: 420px;
         object-fit: contain;
         border-radius: 10px;
       }
@@ -1273,6 +1273,26 @@
         color: #475467;
         font-size: 13px;
         line-height: 1.7;
+      }
+
+      .payment-status {
+        margin: 0 0 16px;
+        border-radius: 10px;
+        padding: 10px 12px;
+        font-size: 13px;
+        font-weight: 700;
+        background: #eef4ff;
+        color: #1d4ed8;
+      }
+
+      .payment-status.is-success {
+        background: #eaf8ef;
+        color: #15803d;
+      }
+
+      .payment-status.is-warning {
+        background: #fff7e6;
+        color: #b45309;
       }
 
       .payment-order {
@@ -3076,7 +3096,7 @@
             </article>
           </div>
           <section class="payment-panel" id="paymentPanel" hidden></section>
-          <p class="vip-footnote" id="vipFootnote">当前为手动收款模式；接入你的微信/支付宝商户支付后，开通按钮会跳转到真实支付二维码。</p>
+          <p class="vip-footnote" id="vipFootnote">已支持手动二维码收款；配置支付回调后，可在支付成功后自动升级套餐。</p>
         </div>
       </section>
     </div>
@@ -3197,6 +3217,8 @@
       let currentAdminSearch = '';
       let currentPaymentPayload = null;
       let currentPaymentChannel = 'alipay';
+      let currentPaymentOrderId = '';
+      let paymentStatusTimer = null;
       let profileHoverCloseTimer = null;
       let profileUsageLoading = false;
       let currentProfileHistory = [];
@@ -3296,11 +3318,11 @@
           vipProFeature2: '每次最多 5 个链接',
           vipProFeature3: '优先解析通道，速度更快',
           vipProFeature4: '专属客服支持',
-          vipFootnote: '当前为手动收款模式；接入你的微信/支付宝商户支付后，开通按钮会跳转到真实支付二维码。',
-          upgradeOrderCreated: '升级订单已创建。当前为手动收款模式，请后续接入你的支付二维码完成自动开通。',
+          vipFootnote: '已支持手动二维码收款；配置支付回调后，可在支付成功后自动升级套餐。',
+          upgradeOrderCreated: '升级订单已创建。',
           paymentTitle: '扫码支付开通会员',
           paymentSubtitle: '请选择微信或支付宝扫码付款，付款备注用于管理员核对订单。',
-          paymentNote: '付款后请联系管理员确认；管理员确认后会在用户管理中为你升级套餐。',
+          paymentNote: '支付成功后将自动升级当前账号套餐。',
           paymentOrder: '订单备注',
           paymentReceiver: '收款方',
           paymentWechat: '微信支付',
@@ -3310,6 +3332,11 @@
           paymentFreeHint: '免费版注册后即可使用。',
           paymentScanInstruction: '使用手机扫一扫支付',
           paymentSupports: '支持支付宝或微信扫码支付',
+          paymentAutoUpgradeOn: '已开启自动升级：支付成功后会自动到账并升级。',
+          paymentAutoUpgradeOff: '未开启自动升级：请配置支付回调密钥（PAYMENT_WEBHOOK_SECRET）。',
+          paymentStatusPending: '等待支付完成...',
+          paymentStatusPaid: '支付成功，套餐已自动升级。',
+          paymentStatusError: '订单状态查询失败，正在重试...',
           featuresTitle: '从链接到素材包',
           featuresCopy: '围绕短视频二次整理的常见流程设计，所有真实能力通过后端完成，浏览器不暴露 Provider 地址和密钥。',
           featureVideoTitle: '无水印视频',
@@ -3568,11 +3595,11 @@
           vipProFeature2: 'Up to 5 links per task',
           vipProFeature3: 'Priority parsing channel',
           vipProFeature4: 'Dedicated support',
-          vipFootnote: 'Manual payment mode is active. After integrating your WeChat/Alipay merchant payment, upgrade buttons can open a real payment QR code.',
-          upgradeOrderCreated: 'Upgrade order created. Manual payment mode is active; connect your payment QR flow later for automatic activation.',
+          vipFootnote: 'Manual QR collection is enabled. Configure payment webhook callback to auto-upgrade plans after successful payment.',
+          upgradeOrderCreated: 'Upgrade order created.',
           paymentTitle: 'Scan To Upgrade',
           paymentSubtitle: 'Use WeChat Pay or Alipay. The payment note helps the admin match your order.',
-          paymentNote: 'After paying, contact the admin for confirmation. The admin can upgrade your plan in user management.',
+          paymentNote: 'Once paid, your account plan will be upgraded automatically.',
           paymentOrder: 'Order note',
           paymentReceiver: 'Receiver',
           paymentWechat: 'WeChat Pay',
@@ -3582,6 +3609,11 @@
           paymentFreeHint: 'Free plan is available after registration.',
           paymentScanInstruction: 'Scan with your phone to pay',
           paymentSupports: 'Supports Alipay or WeChat Pay QR payment',
+          paymentAutoUpgradeOn: 'Auto-upgrade enabled: your plan upgrades right after payment.',
+          paymentAutoUpgradeOff: 'Auto-upgrade is off: configure PAYMENT_WEBHOOK_SECRET first.',
+          paymentStatusPending: 'Waiting for payment confirmation...',
+          paymentStatusPaid: 'Payment confirmed. Plan upgraded automatically.',
+          paymentStatusError: 'Failed to query payment status. Retrying...',
           featuresTitle: 'From Link To Asset Pack',
           featuresCopy: 'Designed around short-video reuse workflows. Backend services do the real work, so provider URLs and keys are not exposed in the browser.',
           featureVideoTitle: 'Watermark-Free Video',
@@ -4542,9 +4574,62 @@
       }
 
       function hidePaymentPanel() {
+        stopPaymentStatusPolling();
         currentPaymentPayload = null;
         paymentPanel.hidden = true;
         paymentPanel.innerHTML = '';
+      }
+
+      function stopPaymentStatusPolling() {
+        if (paymentStatusTimer) {
+          window.clearInterval(paymentStatusTimer);
+          paymentStatusTimer = null;
+        }
+        currentPaymentOrderId = '';
+      }
+
+      async function pollPaymentStatus(orderId, passive = false) {
+        if (!orderId || !currentUser) return;
+        try {
+          const payload = await apiJson(`/api/billing/orders/${encodeURIComponent(orderId)}`);
+          const isPaid = Boolean(payload?.isPaid);
+          const statusNode = document.querySelector('#paymentStatusText');
+          if (statusNode) {
+            statusNode.textContent = isPaid ? t('paymentStatusPaid') : t('paymentStatusPending');
+            statusNode.classList.toggle('is-success', isPaid);
+            statusNode.classList.toggle('is-warning', false);
+          }
+          if (isPaid) {
+            stopPaymentStatusPolling();
+            if (currentUser) {
+              await loadSession();
+              if (!profileModal.hidden) {
+                await openProfileModal({ force: true });
+              }
+            }
+            showToast(t('paymentStatusPaid'));
+            window.setTimeout(() => {
+              hidePaymentPanel();
+            }, 800);
+          }
+        } catch {
+          if (!passive) {
+            const statusNode = document.querySelector('#paymentStatusText');
+            if (statusNode) statusNode.textContent = t('paymentStatusError');
+          }
+        }
+      }
+
+      function startPaymentStatusPolling(payload) {
+        stopPaymentStatusPolling();
+        const orderId = payload?.payment?.id;
+        if (!orderId || !payload?.autoUpgrade?.enabled) return;
+        currentPaymentOrderId = orderId;
+        const intervalMs = Math.max(2000, Number(payload.autoUpgrade.pollIntervalMs || 4000));
+        pollPaymentStatus(orderId, true);
+        paymentStatusTimer = window.setInterval(() => {
+          pollPaymentStatus(orderId, true);
+        }, intervalMs);
       }
 
       function paymentChannelLabel(channel) {
@@ -4577,6 +4662,9 @@
         const selectedLabel = paymentChannelLabel(selectedChannel);
         const selectedQr = selectedChannel?.qrUrl ? apiUrl(selectedChannel.qrUrl) : '';
         const orderNote = manual.orderNote || payment.id || '-';
+        const autoUpgradeEnabled = Boolean(payload.autoUpgrade?.enabled || manual.autoUpgradeEnabled);
+        const statusClass = autoUpgradeEnabled ? '' : ' is-warning';
+        const statusText = autoUpgradeEnabled ? t('paymentAutoUpgradeOn') : t('paymentAutoUpgradeOff');
         paymentPanel.hidden = false;
         paymentPanel.innerHTML = `
           <article class="payment-card" role="dialog" aria-modal="true" aria-labelledby="paymentCardTitle">
@@ -4588,6 +4676,7 @@
               <div class="payment-amount">${escapeHtml(amountText)}</div>
             </div>
             <div class="payment-card-body">
+              <div class="payment-status${statusClass}" id="paymentStatusText">${escapeHtml(statusText)}</div>
               <div class="payment-method-tabs" role="tablist" aria-label="${escapeHtml(t('paymentTitle'))}">
                 ${channels.map((channel) => {
                   const label = paymentChannelLabel(channel);
@@ -4613,6 +4702,7 @@
             </div>
           </article>
         `;
+        startPaymentStatusPolling(payload);
       }
 
       function formatMoney(amount, currency = 'CNY') {

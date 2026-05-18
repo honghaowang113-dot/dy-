@@ -77,19 +77,24 @@ REWRITE_MODEL=Qwen/Qwen2.5-7B-Instruct
 
 默认二维码文件：
 
-- 微信：`assets/payments/wechat-qr.svg`
-- 支付宝：`assets/payments/alipay-qr.svg`
+- 微信：`assets/payments/wechat-qr.jpg`
+- 支付宝：`assets/payments/alipay-qr.jpg`
 
 把这两个文件替换为你自己的收款码图片即可。也可以在 `.env` 中配置外部图片地址：
 
 ```env
 PAYMENT_PROVIDER=manual
 PAYMENT_RECEIVER_NAME=你的收款名称
-PAYMENT_WECHAT_QR_URL=/assets/payments/wechat-qr.svg
-PAYMENT_ALIPAY_QR_URL=/assets/payments/alipay-qr.svg
+PAYMENT_WECHAT_QR_URL=/assets/payments/wechat-qr.jpg
+PAYMENT_ALIPAY_QR_URL=/assets/payments/alipay-qr.jpg
+PAYMENT_WEBHOOK_SECRET=替换为高强度随机字符串
 ```
 
-手动收款模式不会自动升级套餐。付款后需要管理员在“用户管理”里把用户套餐改为标准版或高级版。后续接微信支付 / 支付宝商户接口时，再把支付回调接上自动升级。
+要启用“支付成功自动升级”，请把支付平台回调地址配置为：
+
+`https://你的域名/api/payments/webhook?token=PAYMENT_WEBHOOK_SECRET`
+
+回调触发后，系统会自动把订单标记为已支付并升级对应套餐。
 
 ## 使用说明
 

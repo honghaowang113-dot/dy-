@@ -33,9 +33,10 @@ const USER_HISTORY_LIMIT = Number(process.env.USER_HISTORY_LIMIT || 50);
 const MAX_LINKS_PER_JOB = Number(process.env.MAX_LINKS_PER_JOB || 5);
 const COMMERCIAL_MODE = String(process.env.COMMERCIAL_MODE ?? 'true').toLowerCase() !== 'false';
 const PAYMENT_PROVIDER = process.env.PAYMENT_PROVIDER || 'manual';
+const PAYMENT_WEBHOOK_SECRET = process.env.PAYMENT_WEBHOOK_SECRET || '';
 const PAYMENT_RECEIVER_NAME = process.env.PAYMENT_RECEIVER_NAME || 'ClipFlow';
-const PAYMENT_WECHAT_QR_URL = process.env.PAYMENT_WECHAT_QR_URL || '/assets/payments/wechat-qr.svg';
-const PAYMENT_ALIPAY_QR_URL = process.env.PAYMENT_ALIPAY_QR_URL || '/assets/payments/alipay-qr.svg';
+const PAYMENT_WECHAT_QR_URL = process.env.PAYMENT_WECHAT_QR_URL || '/assets/payments/wechat-qr.jpg';
+const PAYMENT_ALIPAY_QR_URL = process.env.PAYMENT_ALIPAY_QR_URL || '/assets/payments/alipay-qr.jpg';
 const STORAGE_PROVIDER = process.env.STORAGE_PROVIDER || 'local';
 const QUEUE_PROVIDER = process.env.QUEUE_PROVIDER || 'in-process';
 const PLAN_CATALOG = Object.freeze({
@@ -116,6 +117,7 @@ await ensureUserStore();
 await ensureDefaultAdminAccount();
 
 const app = express();
+app.use(express.urlencoded({ extended: false }));
 app.use(express.json({ limit: '128kb' }));
 app.use('/api', rateLimit);
 app.use(express.static(__dirname));
@@ -373,29 +375,77 @@ app.post('/api/billing/checkout', async (req, res) => {
     return res.status(404).json({ error: '账号不存在。' });
   }
   const now = new Date().toISOString();
+  const paymentId = randomUUID();
+  const orderNote = `ClipFlow-${paymentId.slice(0, 8).toUpperCase()}`;
   const payment = {
-    id: randomUUID(),
+    id: paymentId,
     planId,
     planName: plan.name,
     amount: plan.priceMonthly,
     currency: plan.currency,
-    status: PAYMENT_PROVIDER === 'manual' ? 'pending_manual_payment' : 'pending',
+    status: 'pending_payment',
     provider: PAYMENT_PROVIDER,
+    channel: '',
+    tradeNo: '',
+    orderNote,
     createdAt: now,
-    paidAt: ''
+    paidAt: '',
+    updatedAt: now
   };
   target.billingRecords = normalizeBillingRecords(target.billingRecords);
   target.billingRecords.unshift(payment);
   target.updatedAt = now;
   await writeUserDb(db);
+  const autoUpgradeEnabled = Boolean(PAYMENT_WEBHOOK_SECRET);
   res.status(201).json({
     payment,
     checkoutUrl: null,
     manualPayment: manualPaymentView(payment, plan),
-    message: PAYMENT_PROVIDER === 'manual'
-      ? '当前为手动收款模式。接入微信支付、支付宝或 Stripe 后，这里会返回支付链接。'
-      : '支付订单已创建。'
+    autoUpgrade: {
+      enabled: autoUpgradeEnabled,
+      statusUrl: `/api/billing/orders/${payment.id}`,
+      pollIntervalMs: 4000
+    },
+    message: autoUpgradeEnabled
+      ? '订单已创建，支付成功后将自动升级套餐。'
+      : '订单已创建。当前未配置支付回调，暂时无法自动升级。'
   });
+});
+
+app.get('/api/billing/orders/:paymentId', async (req, res) => {
+  const user = await getRequestUser(req);
+  if (!user) {
+    return res.status(401).json({ error: '请先登录。' });
+  }
+  const payment = normalizeBillingRecords(user.billingRecords).find((item) => item.id === req.params.paymentId);
+  if (!payment) {
+    return res.status(404).json({ error: '订单不存在。' });
+  }
+  const activePlanId = normalizePlanId(user.planId);
+  res.json({
+    payment,
+    isPaid: isPaidPaymentStatus(payment.status),
+    activePlanId,
+    activePlanName: PLAN_CATALOG[activePlanId].name
+  });
+});
+
+app.post('/api/payments/webhook', async (req, res) => {
+  if (!isPaymentWebhookAuthorized(req)) {
+    return res.status(401).type('text/plain').send('unauthorized');
+  }
+  const payload = normalizeWebhookPayload(req);
+  if (!payload.orderId) {
+    return res.status(400).type('text/plain').send('missing order id');
+  }
+  if (!payload.isPaid) {
+    return res.status(202).type('text/plain').send('ignored');
+  }
+  const marked = await markOrderPaidAndUpgrade(payload);
+  if (!marked.ok) {
+    return res.status(404).type('text/plain').send('order not found');
+  }
+  return res.status(200).type('text/plain').send('success');
 });
 
 app.get('/api/admin/users', requireAdmin, async (req, res) => {
@@ -567,6 +617,7 @@ app.get('/api/health', (_req, res) => {
     commercial: {
       enabled: COMMERCIAL_MODE,
       paymentProvider: PAYMENT_PROVIDER,
+      paymentAutoUpgrade: Boolean(PAYMENT_WEBHOOK_SECRET),
       storageProvider: STORAGE_PROVIDER,
       queueProvider: QUEUE_PROVIDER,
       database: process.env.DATABASE_URL ? 'postgres-configured' : 'local-json',
@@ -755,7 +806,13 @@ function getRateLimitPolicy(req) {
   if (req.method === 'GET' && path === '/health') {
     return null;
   }
+  if (path === '/payments/webhook') {
+    return null;
+  }
   if (req.method === 'GET' && /^\/jobs\/[^/]+$/.test(path)) {
+    return RATE_LIMIT_POLICIES.status;
+  }
+  if (req.method === 'GET' && /^\/billing\/orders\/[^/]+$/.test(path)) {
     return RATE_LIMIT_POLICIES.status;
   }
   if (req.method === 'GET' && /^\/download\/[^/]+$/.test(path)) {
@@ -976,6 +1033,37 @@ function normalizeQuotaOverrides(value = {}) {
   }, {});
 }
 
+function normalizePaymentStatus(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return 'pending_payment';
+  const map = {
+    pending: 'pending_payment',
+    pending_manual_payment: 'pending_payment',
+    unpaid: 'pending_payment',
+    waiting: 'pending_payment',
+    created: 'pending_payment',
+    active: 'paid',
+    paid: 'paid',
+    success: 'paid',
+    succeeded: 'paid',
+    completed: 'paid',
+    finished: 'paid',
+    trade_success: 'paid',
+    trade_finished: 'paid',
+    transaction_success: 'paid',
+    cancelled: 'cancelled',
+    canceled: 'cancelled',
+    closed: 'cancelled',
+    expired: 'cancelled',
+    failed: 'failed'
+  };
+  return map[normalized] || normalized;
+}
+
+function isPaidPaymentStatus(status) {
+  return normalizePaymentStatus(status) === 'paid';
+}
+
 function normalizeBillingRecords(records = []) {
   if (!Array.isArray(records)) return [];
   return records
@@ -986,10 +1074,14 @@ function normalizeBillingRecords(records = []) {
       planName: PLAN_CATALOG[normalizePlanId(record.planId)].name,
       amount: Number(record.amount || 0),
       currency: String(record.currency || 'CNY'),
-      status: String(record.status || 'active'),
+      status: normalizePaymentStatus(record.status || 'pending_payment'),
       provider: String(record.provider || PAYMENT_PROVIDER),
+      channel: String(record.channel || ''),
+      tradeNo: String(record.tradeNo || ''),
+      orderNote: String(record.orderNote || `ClipFlow-${String(record.id || '').slice(0, 8).toUpperCase()}`),
       createdAt: String(record.createdAt || new Date().toISOString()),
-      paidAt: String(record.paidAt || '')
+      paidAt: String(record.paidAt || ''),
+      updatedAt: String(record.updatedAt || record.paidAt || record.createdAt || new Date().toISOString())
     }))
     .slice(0, 100);
 }
@@ -1426,7 +1518,7 @@ function manualPaymentView(payment, plan) {
     planId: plan.id,
     planName: plan.name,
     orderId: payment.id,
-    orderNote: `ClipFlow-${payment.id.slice(0, 8)}`,
+    orderNote: payment.orderNote || `ClipFlow-${payment.id.slice(0, 8).toUpperCase()}`,
     channels: [
       {
         id: 'wechat',
@@ -1441,8 +1533,99 @@ function manualPaymentView(payment, plan) {
         enabled: Boolean(PAYMENT_ALIPAY_QR_URL)
       }
     ],
-    notice: '付款后请联系管理员确认订单；管理员可在用户管理中手动升级套餐。'
+    autoUpgradeEnabled: Boolean(PAYMENT_WEBHOOK_SECRET),
+    notice: PAYMENT_WEBHOOK_SECRET
+      ? '支付成功后系统会自动升级套餐，通常在 3-10 秒内生效。'
+      : '当前未配置支付回调，付款后请联系管理员确认订单。'
   };
+}
+
+function isPaymentWebhookAuthorized(req) {
+  if (!PAYMENT_WEBHOOK_SECRET) return false;
+  const tokenFromQuery = String(req.query?.token || '');
+  const tokenFromBody = String(req.body?.token || req.body?.webhookToken || '');
+  const tokenFromHeader = String(req.headers['x-payment-secret'] || req.headers['x-webhook-secret'] || '');
+  const supplied = tokenFromHeader || tokenFromBody || tokenFromQuery;
+  return supplied === PAYMENT_WEBHOOK_SECRET;
+}
+
+function pickWebhookField(obj = {}, keys = []) {
+  for (const key of keys) {
+    const value = obj[key];
+    if (value !== undefined && value !== null && String(value).trim() !== '') {
+      return String(value).trim();
+    }
+  }
+  return '';
+}
+
+function normalizeWebhookPayload(req) {
+  const source = (req.body && typeof req.body === 'object') ? req.body : {};
+  const nested = (source.data && typeof source.data === 'object') ? source.data : {};
+  const merged = { ...nested, ...source };
+  const orderId = pickWebhookField(merged, [
+    'orderId',
+    'paymentId',
+    'payment_id',
+    'id',
+    'order_id',
+    'orderNo',
+    'order_no',
+    'outTradeNo',
+    'out_trade_no',
+    'merchant_order_no'
+  ]);
+  const rawStatus = pickWebhookField(merged, ['status', 'trade_status', 'state', 'payment_status', 'result']);
+  const status = normalizePaymentStatus(rawStatus);
+  const amountRaw = pickWebhookField(merged, ['amount', 'money', 'total_amount', 'total_fee', 'receipt_amount']);
+  const amount = Number(amountRaw || 0);
+  const tradeNo = pickWebhookField(merged, ['tradeNo', 'trade_no', 'transaction_id', 'provider_trade_no']);
+  const channel = pickWebhookField(merged, ['channel', 'type', 'pay_type', 'payment_channel']);
+  const provider = pickWebhookField(merged, ['provider']) || PAYMENT_PROVIDER;
+  return {
+    orderId,
+    status,
+    isPaid: isPaidPaymentStatus(status),
+    amount: Number.isFinite(amount) ? amount : 0,
+    tradeNo,
+    channel,
+    provider,
+    rawPayload: source
+  };
+}
+
+async function markOrderPaidAndUpgrade(payload) {
+  const db = await readUserDb();
+  const now = new Date().toISOString();
+  const orderId = String(payload.orderId || '');
+
+  for (const user of db.users) {
+    const records = normalizeBillingRecords(user.billingRecords);
+    const record = records.find((item) => item.id === orderId);
+    if (!record) continue;
+
+    if (!isPaidPaymentStatus(record.status)) {
+      record.status = 'paid';
+      record.provider = payload.provider || record.provider;
+      record.channel = payload.channel || record.channel;
+      record.tradeNo = payload.tradeNo || record.tradeNo;
+      if (Number.isFinite(payload.amount) && payload.amount > 0) {
+        record.amount = payload.amount;
+      }
+      record.paidAt = now;
+      record.updatedAt = now;
+    }
+
+    if (user.role !== 'admin') {
+      user.planId = normalizePlanId(record.planId);
+    }
+    user.billingRecords = records;
+    user.updatedAt = now;
+    await writeUserDb(db);
+    return { ok: true, userId: user.id, planId: user.planId };
+  }
+
+  return { ok: false };
 }
 
 function requireLoggedInUser(req) {
