@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DOMAIN="${1:-dyqushuiyin.top}"
+DOMAIN="${1:-dyhonghao.top}"
 EMAIL="${2:-admin@${DOMAIN}}"
 
 echo "[1/3] Installing certbot..."

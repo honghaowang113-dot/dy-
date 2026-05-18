@@ -1,7 +1,7 @@
 # AliCloud ECS Deployment
 
 Target:
-- Domain: `dyqushuiyin.top`
+- Domain: `dyhonghao.top`
 - Server IP: `8.156.90.229`
 - App port: `3019` (internal), Nginx exposes `80/443`.
 
@@ -28,22 +28,22 @@ Then run:
 bash /var/www/clipflow/deploy/alicloud/bootstrap.sh \
   https://github.com/honghaowang113-dot/dy-.git \
   /var/www/clipflow \
-  dyqushuiyin.top
+  dyhonghao.top
 ```
 
 ## 3) Enable HTTPS
 
 ```bash
-bash /var/www/clipflow/deploy/alicloud/enable-https.sh dyqushuiyin.top your-email@example.com
+bash /var/www/clipflow/deploy/alicloud/enable-https.sh dyhonghao.top your-email@example.com
 ```
 
 ## 4) Verify
 
 ```bash
-curl -I http://dyqushuiyin.top
-curl -I https://dyqushuiyin.top
-curl -I https://dyqushuiyin.top/robots.txt
-curl -I https://dyqushuiyin.top/sitemap.xml
+curl -I http://dyhonghao.top
+curl -I https://dyhonghao.top
+curl -I https://dyhonghao.top/robots.txt
+curl -I https://dyhonghao.top/sitemap.xml
 pm2 status
 ```
 

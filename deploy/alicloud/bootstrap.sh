@@ -3,7 +3,7 @@ set -euo pipefail
 
 REPO_URL="${1:-https://github.com/honghaowang113-dot/dy-.git}"
 APP_DIR="${2:-/var/www/clipflow}"
-DOMAIN="${3:-dyqushuiyin.top}"
+DOMAIN="${3:-dyhonghao.top}"
 PUBLIC_URL="https://${DOMAIN}"
 
 echo "[1/8] Installing base packages..."
@@ -49,7 +49,27 @@ else
 fi
 
 echo "[7/8] Configuring Nginx..."
-sudo cp "${APP_DIR}/deploy/alicloud/nginx.clipflow.conf" /etc/nginx/sites-available/clipflow
+cat > /tmp/clipflow.nginx.conf <<EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DOMAIN} www.${DOMAIN};
+
+    client_max_body_size 100m;
+
+    location / {
+        proxy_pass http://127.0.0.1:3019;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+EOF
+sudo cp /tmp/clipflow.nginx.conf /etc/nginx/sites-available/clipflow
 sudo ln -sf /etc/nginx/sites-available/clipflow /etc/nginx/sites-enabled/clipflow
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t
