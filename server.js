@@ -112,12 +112,18 @@ const ALLOW_WATERMARK_FALLBACK = String(process.env.ALLOW_WATERMARK_FALLBACK || 
 const ENABLE_VIDEO_OPTIMIZE = String(process.env.ENABLE_VIDEO_OPTIMIZE ?? 'true').toLowerCase() !== 'false';
 const VIDEO_OPTIMIZE_CRF = clamp(Number(process.env.VIDEO_OPTIMIZE_CRF || 18), 14, 28);
 const VIDEO_OPTIMIZE_PRESET = process.env.VIDEO_OPTIMIZE_PRESET || 'medium';
+const PROVIDER_REQUEST_TIMEOUT_MS = clamp(Number(process.env.PROVIDER_REQUEST_TIMEOUT_MS || 9000), 3000, 30000);
+const REDIRECT_TIMEOUT_MS = clamp(Number(process.env.REDIRECT_TIMEOUT_MS || 4500), 2000, 12000);
+const REDIRECT_MAX_HOPS = clamp(Number(process.env.REDIRECT_MAX_HOPS || 3), 1, 5);
+const MAX_CANDIDATE_URLS = clamp(Number(process.env.MAX_CANDIDATE_URLS || 2), 1, 6);
+const PARSE_CACHE_TTL_MS = clamp(Number(process.env.PARSE_CACHE_TTL_MINUTES || 30), 1, 240) * 60 * 1000;
 const DEFAULT_DOUYIN_PROVIDERS = ['tikhub', 'xinyew', 'mxin', 'jxcxin', 'devtool', 'makuo', 'mujie'];
 const DOUYIN_PROVIDER_ORDER = parseProviderOrder(process.env.DOUYIN_PROVIDERS);
 
 const allowedHostSuffixes = ['douyin.com', 'iesdouyin.com'];
 const jobs = new Map();
 const assets = new Map();
+const parseCache = new Map();
 const rateWindows = new Map();
 const smsCodes = new Map();
 let alipayClient = null;
@@ -651,7 +657,10 @@ app.get('/api/health', (_req, res) => {
     limits: {
       maxLinksPerJob: MAX_LINKS_PER_JOB,
       maxDownloadMb: Number(process.env.MAX_DOWNLOAD_MB || 200),
-      jobTtlMinutes: Number(process.env.JOB_TTL_MINUTES || 120)
+      jobTtlMinutes: Number(process.env.JOB_TTL_MINUTES || 120),
+      providerTimeoutMs: PROVIDER_REQUEST_TIMEOUT_MS,
+      redirectTimeoutMs: REDIRECT_TIMEOUT_MS,
+      parseCacheTtlMinutes: Math.round(PARSE_CACHE_TTL_MS / 60000)
     },
     commercial: {
       enabled: COMMERCIAL_MODE,
@@ -817,6 +826,7 @@ app.listen(PORT, () => {
 
 setInterval(cleanExpiredJobs, 15 * 60 * 1000).unref();
 setInterval(cleanExpiredSmsCodes, 60 * 1000).unref();
+setInterval(cleanExpiredParseCache, 5 * 60 * 1000).unref();
 
 function rateLimit(req, res, next) {
   const policy = getRateLimitPolicy(req);
@@ -2002,6 +2012,7 @@ function createJob(urls, userId = '') {
       inputUrl: url,
       status: 'queued',
       stage: '等待解析',
+      progress: 0,
       assets: {}
     }))
   };
@@ -2019,8 +2030,9 @@ async function processJob(job) {
       item.stage = '正在解析抖音链接';
       updateJobProgress(job, index, 0.12);
 
-      const parsed = await parseDouyin(item.inputUrl);
+      const parsed = await parseDouyinFast(item.inputUrl);
       item.parsed = parsed;
+      item.parseMs = Number(parsed.parseMs || 0);
       item.scriptText = buildScriptText(parsed);
 
       const itemDir = join(TMP_ROOT, job.id, item.id);
@@ -2130,6 +2142,7 @@ async function processJob(job) {
 }
 
 async function parseDouyin(url) {
+  return parseDouyinFast(url);
   const providers = getEnabledProviders();
   const candidateUrls = await getCandidateUrls(url);
   const failures = [];
@@ -2160,6 +2173,54 @@ async function parseDouyin(url) {
 }
 
 async function getCandidateUrls(url) {
+  // legacy entry kept for compatibility
+  return getCandidateUrlsFast(url);
+}
+
+async function parseDouyinFast(url) {
+  const providers = getEnabledProviders();
+  const candidateUrls = await getCandidateUrlsFast(url);
+  const cacheHit = getCachedParseResult([url, ...candidateUrls]);
+  if (cacheHit) {
+    return {
+      ...cacheHit,
+      sourceUrl: url,
+      cached: true
+    };
+  }
+
+  const failures = [];
+  const startedAt = Date.now();
+  for (const provider of providers) {
+    if (!provider.isConfigured()) {
+      failures.push(`${provider.providerName}: 未配置，已跳过`);
+      continue;
+    }
+
+    const providerFailures = [];
+    for (const candidateUrl of candidateUrls) {
+      try {
+        const parsed = await provider(candidateUrl, { originalUrl: url, candidateUrls });
+        const result = {
+          ...parsed,
+          sourceUrl: url,
+          resolvedUrl: candidateUrl,
+          cached: false,
+          parseMs: Date.now() - startedAt
+        };
+        saveParseResultToCache([url, candidateUrl], result);
+        return result;
+      } catch (error) {
+        providerFailures.push(error.message);
+      }
+    }
+    failures.push(`${provider.providerName}: ${summarizeFailures(providerFailures)}`);
+  }
+
+  throw new Error(`解析服务不可用。${failures.slice(0, 8).join('；')}`);
+}
+
+async function getCandidateUrlsFast(url) {
   const urls = [url];
   try {
     const expanded = await expandRedirects(url);
@@ -2167,18 +2228,18 @@ async function getCandidateUrls(url) {
   } catch {
     // Some short-link redirects block server requests. Keep the original URL.
   }
-  return [...new Set(urls)];
+  return [...new Set(urls)].slice(0, MAX_CANDIDATE_URLS);
 }
 
 async function expandRedirects(url) {
   const urls = [];
   let current = url;
-  for (let i = 0; i < 5; i += 1) {
+  for (let i = 0; i < REDIRECT_MAX_HOPS; i += 1) {
     const response = await fetchWithTimeout(current, {
       method: 'GET',
       redirect: 'manual',
       headers: requestHeaders()
-    }, 12000);
+    }, REDIRECT_TIMEOUT_MS);
     const location = response.headers.get('location');
     if (!location || response.status < 300 || response.status > 399) break;
     current = new URL(location, current).toString();
@@ -2438,13 +2499,14 @@ parseWithDevTool.providerKey = 'devtool';
 parseWithDevTool.isConfigured = () => true;
 
 async function fetchJson(url, options = {}) {
+  const { timeoutMs = PROVIDER_REQUEST_TIMEOUT_MS, ...requestOptions } = options;
   const response = await fetchWithTimeout(url, {
-    ...options,
+    ...requestOptions,
     headers: {
       ...requestHeaders(),
-      ...(options.headers || {})
+      ...(requestOptions.headers || {})
     }
-  }, 20000);
+  }, timeoutMs);
   const text = await response.text();
   let json;
   try {
@@ -2948,9 +3010,13 @@ function asciiFilename(filename) {
 }
 
 function updateJobProgress(job, itemIndex, itemProgress) {
-  const completed = itemIndex;
-  const total = job.items.length;
-  job.progress = Math.min(99, Math.round(((completed + itemProgress) / total) * 100));
+  const total = Math.max(1, job.items.length);
+  const safeProgress = clamp(Number(itemProgress), 0, 1);
+  if (job.items[itemIndex]) {
+    job.items[itemIndex].progress = safeProgress;
+  }
+  const aggregate = job.items.reduce((sum, item) => sum + clamp(Number(item.progress), 0, 1), 0);
+  job.progress = Math.min(99, Math.round((aggregate / total) * 100));
   touch(job);
 }
 
@@ -2975,6 +3041,8 @@ function toPublicJob(job) {
       stage: item.stage,
       error: item.error,
       parsed: item.parsed,
+      parseMs: item.parseMs || 0,
+      cached: Boolean(item.parsed?.cached),
       assets: item.assets,
       scriptText: item.scriptText,
       videoOptimization: item.videoOptimization,
@@ -3060,6 +3128,54 @@ function unwrapTikHubData(json) {
 function summarizeFailures(messages) {
   const unique = [...new Set(messages.filter(Boolean))];
   return unique.slice(0, 2).join(' / ') || '解析失败';
+}
+
+function getCachedParseResult(urls = []) {
+  const now = Date.now();
+  for (const raw of urls) {
+    const key = normalizeParseCacheKey(raw);
+    if (!key) continue;
+    const cacheItem = parseCache.get(key);
+    if (!cacheItem) continue;
+    if (cacheItem.expiresAt <= now) {
+      parseCache.delete(key);
+      continue;
+    }
+    return clonePlain(cacheItem.data);
+  }
+  return null;
+}
+
+function saveParseResultToCache(urls = [], parsed = {}) {
+  if (!PARSE_CACHE_TTL_MS) return;
+  const keyList = [...new Set(urls.map(normalizeParseCacheKey).filter(Boolean))];
+  if (!keyList.length) return;
+
+  const base = clonePlain(parsed);
+  delete base.cached;
+  delete base.parseMs;
+  const entry = {
+    expiresAt: Date.now() + PARSE_CACHE_TTL_MS,
+    data: base
+  };
+
+  for (const key of keyList) {
+    parseCache.set(key, entry);
+  }
+}
+
+function normalizeParseCacheKey(value) {
+  const input = String(value || '').trim();
+  if (!input) return '';
+  try {
+    return new URL(input).toString();
+  } catch {
+    return input;
+  }
+}
+
+function clonePlain(value) {
+  return JSON.parse(JSON.stringify(value));
 }
 
 function firstText(...values) {
@@ -3158,6 +3274,15 @@ async function cleanExpiredJobs() {
       if (asset.jobId === jobId) assets.delete(assetId);
     }
     await rm(join(TMP_ROOT, jobId), { recursive: true, force: true });
+  }
+}
+
+function cleanExpiredParseCache() {
+  const now = Date.now();
+  for (const [key, item] of parseCache) {
+    if (!item || item.expiresAt <= now) {
+      parseCache.delete(key);
+    }
   }
 }
 

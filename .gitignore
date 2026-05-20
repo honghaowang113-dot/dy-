@@ -4,5 +4,6 @@ node_modules/
 data/
 tmp/
 dist/
+.deploy/
 npm-debug.log*
 .DS_Store
