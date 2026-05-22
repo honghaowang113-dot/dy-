@@ -114,6 +114,7 @@ const VIDEO_OPTIMIZE_CRF = clamp(Number(process.env.VIDEO_OPTIMIZE_CRF || 18), 1
 const VIDEO_OPTIMIZE_PRESET = process.env.VIDEO_OPTIMIZE_PRESET || 'medium';
 const PROVIDER_REQUEST_TIMEOUT_MS = clamp(Number(process.env.PROVIDER_REQUEST_TIMEOUT_MS || 9000), 3000, 30000);
 const REDIRECT_TIMEOUT_MS = clamp(Number(process.env.REDIRECT_TIMEOUT_MS || 4500), 2000, 12000);
+const REDIRECT_FAST_BUDGET_MS = clamp(Number(process.env.REDIRECT_FAST_BUDGET_MS || 1200), 500, 8000);
 const REDIRECT_MAX_HOPS = clamp(Number(process.env.REDIRECT_MAX_HOPS || 3), 1, 5);
 const MAX_CANDIDATE_URLS = clamp(Number(process.env.MAX_CANDIDATE_URLS || 2), 1, 6);
 const PARSE_CACHE_TTL_MS = clamp(Number(process.env.PARSE_CACHE_TTL_MINUTES || 30), 1, 240) * 60 * 1000;
@@ -2223,12 +2224,21 @@ async function parseDouyinFast(url) {
 async function getCandidateUrlsFast(url) {
   const urls = [url];
   try {
-    const expanded = await expandRedirects(url);
+    const expanded = await Promise.race([
+      expandRedirects(url),
+      wait(REDIRECT_FAST_BUDGET_MS).then(() => [])
+    ]);
     urls.push(...expanded);
   } catch {
     // Some short-link redirects block server requests. Keep the original URL.
   }
   return [...new Set(urls)].slice(0, MAX_CANDIDATE_URLS);
+}
+
+function wait(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 async function expandRedirects(url) {

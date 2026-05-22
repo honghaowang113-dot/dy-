@@ -833,6 +833,23 @@
         align-items: center;
       }
 
+      .footer-brand {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .icp-link {
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 700;
+        text-decoration: none;
+      }
+
+      .icp-link:hover {
+        color: var(--accent);
+      }
+
       .compliance-links {
         display: flex;
         flex-wrap: wrap;
@@ -2486,6 +2503,15 @@
           align-items: flex-start;
           flex-direction: column;
         }
+
+        .footer-row {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        .compliance-links {
+          justify-content: flex-start;
+        }
       }
     </style>
   </head>
@@ -2741,7 +2767,10 @@
 
     <footer class="site-footer">
       <div class="shell footer-row">
-        <span>ClipFlow Douyin Extractor</span>
+        <div class="footer-brand">
+          <span>ClipFlow Douyin Extractor</span>
+          <a class="icp-link" href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">蜀ICP备2026026207号-1</a>
+        </div>
         <div class="compliance-links" aria-label="合规页面">
           <button class="compliance-link" type="button" data-compliance="terms">服务条款</button>
           <button class="compliance-link" type="button" data-compliance="privacy">隐私政策</button>
