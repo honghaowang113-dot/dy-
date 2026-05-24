@@ -117,6 +117,7 @@ const REDIRECT_TIMEOUT_MS = clamp(Number(process.env.REDIRECT_TIMEOUT_MS || 4500
 const REDIRECT_FAST_BUDGET_MS = clamp(Number(process.env.REDIRECT_FAST_BUDGET_MS || 1200), 500, 8000);
 const REDIRECT_MAX_HOPS = clamp(Number(process.env.REDIRECT_MAX_HOPS || 3), 1, 5);
 const MAX_CANDIDATE_URLS = clamp(Number(process.env.MAX_CANDIDATE_URLS || 2), 1, 6);
+const PARSE_PROVIDER_CONCURRENCY = clamp(Number(process.env.PARSE_PROVIDER_CONCURRENCY || 4), 1, 12);
 const PARSE_CACHE_TTL_MS = clamp(Number(process.env.PARSE_CACHE_TTL_MINUTES || 30), 1, 240) * 60 * 1000;
 const DEFAULT_DOUYIN_PROVIDERS = ['tikhub', 'xinyew', 'mxin', 'jxcxin', 'devtool', 'makuo', 'mujie'];
 const DOUYIN_PROVIDER_ORDER = parseProviderOrder(process.env.DOUYIN_PROVIDERS);
@@ -661,6 +662,8 @@ app.get('/api/health', (_req, res) => {
       jobTtlMinutes: Number(process.env.JOB_TTL_MINUTES || 120),
       providerTimeoutMs: PROVIDER_REQUEST_TIMEOUT_MS,
       redirectTimeoutMs: REDIRECT_TIMEOUT_MS,
+      redirectFastBudgetMs: REDIRECT_FAST_BUDGET_MS,
+      parseProviderConcurrency: PARSE_PROVIDER_CONCURRENCY,
       parseCacheTtlMinutes: Math.round(PARSE_CACHE_TTL_MS / 60000)
     },
     commercial: {
@@ -2192,33 +2195,78 @@ async function parseDouyinFast(url) {
 
   const failures = [];
   const startedAt = Date.now();
+  const attempts = [];
   for (const provider of providers) {
     if (!provider.isConfigured()) {
       failures.push(`${provider.providerName}: 未配置，已跳过`);
       continue;
     }
 
-    const providerFailures = [];
     for (const candidateUrl of candidateUrls) {
-      try {
-        const parsed = await provider(candidateUrl, { originalUrl: url, candidateUrls });
-        const result = {
-          ...parsed,
-          sourceUrl: url,
-          resolvedUrl: candidateUrl,
-          cached: false,
-          parseMs: Date.now() - startedAt
-        };
-        saveParseResultToCache([url, candidateUrl], result);
-        return result;
-      } catch (error) {
-        providerFailures.push(error.message);
-      }
+      attempts.push({ provider, candidateUrl });
     }
-    failures.push(`${provider.providerName}: ${summarizeFailures(providerFailures)}`);
+  }
+
+  try {
+    const { parsed, candidateUrl } = await firstSuccessfulProviderAttempt(attempts, url, candidateUrls);
+    const result = {
+      ...parsed,
+      sourceUrl: url,
+      resolvedUrl: candidateUrl,
+      cached: false,
+      parseMs: Date.now() - startedAt
+    };
+    saveParseResultToCache([url, candidateUrl], result);
+    return result;
+  } catch (error) {
+    failures.push(...(error.failures || []));
   }
 
   throw new Error(`解析服务不可用。${failures.slice(0, 8).join('；')}`);
+}
+
+function firstSuccessfulProviderAttempt(attempts, originalUrl, candidateUrls) {
+  if (!attempts.length) {
+    return Promise.reject(Object.assign(new Error('No configured parse providers.'), { failures: [] }));
+  }
+
+  return new Promise((resolve, reject) => {
+    const failures = [];
+    let cursor = 0;
+    let inflight = 0;
+    let settled = false;
+
+    const launch = () => {
+      if (settled) return;
+      if (cursor >= attempts.length && inflight === 0) {
+        const uniqueFailures = [...new Set(failures.filter(Boolean))];
+        reject(Object.assign(new Error('All parse providers failed.'), { failures: uniqueFailures }));
+        return;
+      }
+
+      while (!settled && inflight < PARSE_PROVIDER_CONCURRENCY && cursor < attempts.length) {
+        const attempt = attempts[cursor];
+        cursor += 1;
+        inflight += 1;
+
+        attempt.provider(attempt.candidateUrl, { originalUrl, candidateUrls })
+          .then((parsed) => {
+            if (settled) return;
+            settled = true;
+            resolve({ parsed, provider: attempt.provider, candidateUrl: attempt.candidateUrl });
+          })
+          .catch((error) => {
+            failures.push(`${attempt.provider.providerName}: ${error.message || '解析失败'}`);
+          })
+          .finally(() => {
+            inflight -= 1;
+            launch();
+          });
+      }
+    };
+
+    launch();
+  });
 }
 
 async function getCandidateUrlsFast(url) {

@@ -5532,7 +5532,7 @@
           `;
         }
 
-        if (item.status !== 'done' && item.status !== 'failed') {
+        if (item.status !== 'done' && item.status !== 'failed' && !item.parsed) {
           return `
             <article class="result-card">
               <div class="result-body">
