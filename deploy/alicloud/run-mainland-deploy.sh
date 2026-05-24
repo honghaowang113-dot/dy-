@@ -9,10 +9,23 @@ ENV_B64_FILE="${1:-}"
 
 echo "== 1. Base packages =="
 export DEBIAN_FRONTEND=noninteractive
-apt-get update
-apt-get install -y git curl nginx ffmpeg ca-certificates nodejs npm
+missing_packages=()
+for bin in git curl nginx ffmpeg node npm; do
+  if ! command -v "$bin" >/dev/null 2>&1; then
+    missing_packages+=( "$bin" )
+  fi
+done
+
+if [ "${#missing_packages[@]}" -gt 0 ]; then
+  apt-get update
+  apt-get install -y git curl nginx ffmpeg ca-certificates nodejs npm
+else
+  echo "Base packages already installed; skipping apt-get."
+fi
 npm config set registry https://registry.npmmirror.com
-npm install -g pm2 --registry=https://registry.npmmirror.com || true
+if ! command -v pm2 >/dev/null 2>&1; then
+  npm install -g pm2 --registry=https://registry.npmmirror.com
+fi
 
 echo "== 2. Source code =="
 mkdir -p /var/www
