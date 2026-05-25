@@ -42,6 +42,8 @@ bash /var/www/clipflow/deploy/alicloud/bootstrap.sh \
 
 ## 3) Enable HTTPS
 
+This uses `acme.sh` with the existing Nginx webroot, so it does not install Certbot through apt.
+
 ```bash
 bash /var/www/clipflow/deploy/alicloud/enable-https.sh dyhonghao.top your-email@example.com
 ```
