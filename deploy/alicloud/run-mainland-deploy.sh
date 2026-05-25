@@ -87,6 +87,7 @@ set_env PARSE_CACHE_TTL_MINUTES 60
 set_env AUTO_MEDIA_PROCESSING false
 set_env ENABLE_VIDEO_OPTIMIZE false
 set_env LOG_PROVIDER_TIMINGS true
+set_env REWRITE_MAX_TOKENS 900
 
 echo "== 4. Validate code =="
 node --check server.js

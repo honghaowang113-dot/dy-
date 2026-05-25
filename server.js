@@ -627,18 +627,28 @@ app.post('/api/rewrite', async (req, res) => {
       return res.status(401).json({ error: '请先登录后再使用 AI 改写。' });
     }
     const sourceText = String(req.body?.text || '').trim();
+    const sourceTitle = String(req.body?.title || '').trim().slice(0, 300);
+    const sourceDescription = String(req.body?.description || '').trim().slice(0, 1200);
+    const sourceKind = String(req.body?.sourceKind || 'script').trim().slice(0, 40) || 'script';
     const language = String(req.body?.language || 'zh').toLowerCase() === 'en' ? 'en' : 'zh';
-    if (sourceText.length < 4) {
+    const sourceLength = [sourceText, sourceTitle, sourceDescription].filter(Boolean).join('\n').length;
+    if (sourceLength < 4) {
       return res.status(400).json({ error: language === 'en' ? 'Not enough copy to rewrite.' : '可改写的文案太短。' });
     }
-    if (sourceText.length > 3000) {
-      return res.status(400).json({ error: language === 'en' ? 'Copy is too long. Keep it under 3000 characters.' : '文案过长，请控制在 3000 字以内。' });
+    if (sourceLength > 4000) {
+      return res.status(400).json({ error: language === 'en' ? 'Copy is too long. Keep it under 4000 characters.' : '文案过长，请控制在 4000 字以内。' });
     }
 
     if (user) {
       await consumeUserQuota(user.id, 'rewrite', 1);
     }
-    const result = await rewriteCopy({ sourceText, language });
+    const result = await rewriteCopy({
+      sourceText,
+      title: sourceTitle,
+      description: sourceDescription,
+      sourceKind,
+      language
+    });
     res.json(result);
   } catch (error) {
     res.status(error.statusCode || 500).json({ error: error.message || 'AI 改写失败。' });
@@ -2934,27 +2944,26 @@ function runFfmpegCover(inputPath, outputPath) {
   });
 }
 
-async function rewriteCopy({ sourceText, language = 'zh' }) {
+async function rewriteCopy({ sourceText, title = '', description = '', sourceKind = 'script', language = 'zh' }) {
   const apiKey = process.env.REWRITE_API_KEY || process.env.TRANSCRIPTION_API_KEY;
+  const rewriteContext = { title, description, sourceKind };
+  const sourceLength = [sourceText, title, description].filter(Boolean).join('\n').length;
   if (!apiKey) {
+    const fallback = localRewriteCopy(sourceText, language, rewriteContext);
     return {
       status: 'fallback',
       provider: 'local',
-      text: localRewriteCopy(sourceText, language),
-      sourceLength: sourceText.length,
-      rewrittenLength: localRewriteCopy(sourceText, language).length,
-      reason: language === 'en' ? 'AI rewrite provider is not configured.' : 'AI 改写服务未配置，已生成本地改写建议。'
+      text: fallback,
+      sourceLength,
+      rewrittenLength: fallback.length,
+      reason: language === 'en' ? 'AI rewrite provider is not configured. A local video script was generated.' : 'AI 改写服务未配置，已生成本地脚本文案。'
     };
   }
 
   const baseUrl = process.env.REWRITE_BASE_URL || 'https://api.siliconflow.cn/v1/chat/completions';
   const model = process.env.REWRITE_MODEL || 'Qwen/Qwen2.5-7B-Instruct';
-  const systemPrompt = language === 'en'
-    ? 'You are a short-video script rewriting assistant. Rewrite only the exact copied video script provided by the user. Do not rewrite the title, do not infer from the title, do not add unsupported claims, and output only the rewritten copy.'
-    : '你是短视频视频文案改写助手。只改写用户复制出来的那段视频文案，不按视频标题或商品标题改写，不新增原文没有的信息，不输出解释，只输出改写后的文案。';
-  const userPrompt = language === 'en'
-    ? `Copied video script:\n${sourceText}\n\nRewrite ONLY this copied video script. Keep the original meaning and produce polished social video copy.`
-    : `复制下来的视频文案：\n${sourceText}\n\n请只改写上面这段“复制文案”的内容，保留原意，改成更顺口、更适合发布的中文短视频文案。`;
+  const systemPrompt = rewriteSystemPrompt(language);
+  const userPrompt = rewriteUserPrompt({ sourceText, title, description, sourceKind, language });
 
   try {
     const response = await fetchWithTimeout(baseUrl, {
@@ -2970,17 +2979,17 @@ async function rewriteCopy({ sourceText, language = 'zh' }) {
           { role: 'user', content: userPrompt }
         ],
         temperature: Number(process.env.REWRITE_TEMPERATURE || 0.75),
-        max_tokens: Number(process.env.REWRITE_MAX_TOKENS || 500)
+        max_tokens: Number(process.env.REWRITE_MAX_TOKENS || 900)
       })
     }, 60000);
     const json = await response.json().catch(() => ({}));
     if (!response.ok) {
-      const fallback = localRewriteCopy(sourceText, language);
+      const fallback = localRewriteCopy(sourceText, language, rewriteContext);
       return {
         status: 'fallback',
         provider: model,
         text: fallback,
-        sourceLength: sourceText.length,
+        sourceLength,
         rewrittenLength: fallback.length,
         reason: rewriteErrorMessage(response.status, json, language)
       };
@@ -2993,62 +3002,116 @@ async function rewriteCopy({ sourceText, language = 'zh' }) {
       ''
     );
     if (!rewritten) {
-      const fallback = localRewriteCopy(sourceText, language);
+      const fallback = localRewriteCopy(sourceText, language, rewriteContext);
       return {
         status: 'fallback',
         provider: model,
         text: fallback,
-        sourceLength: sourceText.length,
+        sourceLength,
         rewrittenLength: fallback.length,
-        reason: language === 'en' ? 'AI provider returned empty content.' : 'AI 服务未返回有效文案，已生成本地改写建议。'
+        reason: language === 'en' ? 'AI provider returned empty content. A local video script was generated.' : 'AI 服务未返回有效文案，已生成本地脚本文案。'
       };
     }
     return {
       status: 'ok',
       provider: model,
       text: rewritten,
-      sourceLength: sourceText.length,
+      sourceLength,
       rewrittenLength: rewritten.length
     };
   } catch (error) {
-    const fallback = localRewriteCopy(sourceText, language);
+    const fallback = localRewriteCopy(sourceText, language, rewriteContext);
     return {
       status: 'fallback',
       provider: model,
       text: fallback,
-      sourceLength: sourceText.length,
+      sourceLength,
       rewrittenLength: fallback.length,
-      reason: error.message || (language === 'en' ? 'AI rewrite failed.' : 'AI 改写失败，已生成本地改写建议。')
+      reason: error.message || (language === 'en' ? 'AI rewrite failed. A local video script was generated.' : 'AI 改写失败，已生成本地脚本文案。')
     };
   }
+}
+
+function rewriteSystemPrompt(language = 'zh') {
+  if (language === 'en') {
+    return [
+      'You are a short-video script copywriter.',
+      'Turn the provided video source material into a ready-to-record short-video voiceover script.',
+      'Output only the script copy, with no analysis or explanations.',
+      'Use a clear structure: hook, body, and closing call-to-action.',
+      'Preserve the original facts and do not invent prices, claims, data, effects, or promises.'
+    ].join(' ');
+  }
+  return [
+    '你是短视频口播脚本文案改写助手。',
+    '把用户提供的视频原文、标题或描述改写成可直接拍摄和口播的视频脚本文案。',
+    '只输出脚本文案，不输出分析、解释或提示语。',
+    '脚本需要包含开场钩子、正文展开和结尾引导。',
+    '保留原意，不编造原文没有的价格、功效、数据、承诺或事实。'
+  ].join('');
+}
+
+function rewriteUserPrompt({ sourceText = '', title = '', description = '', sourceKind = 'script', language = 'zh' }) {
+  const material = [
+    title ? `${language === 'en' ? 'Video title' : '视频标题'}：${title}` : '',
+    description ? `${language === 'en' ? 'Video description' : '视频描述'}：${description}` : '',
+    sourceText ? `${language === 'en' ? 'Available script/copy' : '可用原文/转写文案'}：\n${sourceText}` : ''
+  ].filter(Boolean).join('\n\n');
+
+  if (language === 'en') {
+    return [
+      `Source kind: ${sourceKind || 'script'}`,
+      material,
+      'Generate one polished short-video voiceover script from the material above.',
+      'If the available copy is only a title or description, expand it into a concise script without inventing unsupported facts.',
+      'Do not return a title, outline, or explanation.'
+    ].join('\n\n');
+  }
+
+  return [
+    `素材类型：${sourceKind || 'script'}`,
+    material,
+    '请基于以上素材生成一版中文短视频口播脚本文案。',
+    '如果可用原文只有标题或描述，请在不编造事实的前提下扩写成完整、顺口、可拍摄的脚本。',
+    '不要返回标题、提纲或解释。'
+  ].join('\n\n');
 }
 
 function cleanRewriteText(value) {
   return String(value || '')
     .replace(/^["'“”]+|["'“”]+$/g, '')
-    .replace(/^(改写后[:：]|文案[:：]|rewritten copy:)/i, '')
+    .replace(/^(改写后[:：]|文案[:：]|脚本文案[:：]|rewritten copy:|script copy:)/i, '')
     .trim()
     .slice(0, 3000);
 }
 
-function localRewriteCopy(sourceText, language = 'zh') {
-  const cleaned = String(sourceText || '')
+function localRewriteCopy(sourceText, language = 'zh', context = {}) {
+  const cleaned = firstText(sourceText, context.description, context.title)
     .replace(/https?:\/\/\S+/g, '')
     .replace(/\s+/g, ' ')
     .trim();
+  const core = cleaned || (language === 'en' ? 'This video shares a practical idea worth remembering.' : '这条视频分享了一个值得关注的实用内容');
   if (language === 'en') {
-    return `${cleaned}\n\nA cleaner version for posting: practical, easy to understand, and focused on why this content is useful in everyday use.`;
+    return [
+      `Hook: ${core}`,
+      'Body: Keep the key point clear, show the useful detail, and explain why it matters in a simple way.',
+      'Closing: Save this idea and use it when you need a quick reference.'
+    ].join('\n');
   }
-  const body = cleaned.replace(/[。！？!?]+$/g, '');
-  return `${body}。这个内容适合日常直接参考，重点清晰、使用场景明确，想提升效率或整理同类素材时可以先收藏起来。`;
+  const body = core.replace(/[。！？!?]+$/g, '');
+  return [
+    `【开场】${body}，这个点一定要看完。`,
+    '【正文】先把核心信息讲清楚，再结合使用场景展开，让观众知道它解决什么问题、适合什么时候参考。',
+    '【结尾】如果你也需要整理类似内容，可以先收藏起来，后面直接对照使用。'
+  ].join('\n');
 }
 
 function rewriteErrorMessage(status, json = {}, language = 'zh') {
   const providerMessage = json.error?.message || json.message || '';
   if (language === 'en') {
-    return `AI rewrite provider returned HTTP ${status}${providerMessage ? `: ${providerMessage}` : ''}. A local rewrite suggestion was generated.`;
+    return `AI rewrite provider returned HTTP ${status}${providerMessage ? `: ${providerMessage}` : ''}. A local video script was generated.`;
   }
-  return `AI 改写接口返回 HTTP ${status}${providerMessage ? `：${providerMessage}` : ''}，已生成本地改写建议。`;
+  return `AI 改写接口返回 HTTP ${status}${providerMessage ? `：${providerMessage}` : ''}，已生成本地脚本文案。`;
 }
 
 async function transcribeIfConfigured(mp3Path) {

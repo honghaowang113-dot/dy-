@@ -73,6 +73,7 @@ TRANSCRIPTION_LANGUAGE=zh
 REWRITE_API_KEY=
 REWRITE_BASE_URL=https://api.siliconflow.cn/v1/chat/completions
 REWRITE_MODEL=Qwen/Qwen2.5-7B-Instruct
+REWRITE_MAX_TOKENS=900
 ```
 
 不配置转写时，视频、封面、BGM、MP3 和 ZIP 下载仍可使用。

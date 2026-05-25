@@ -3507,15 +3507,15 @@
           deleteUser: '删除',
           deleteUserConfirm: '确认删除这个用户？该用户的任务历史、用量和订单记录会一起删除。',
           userDeleted: '用户已删除',
-          aiRewrite: 'AI 智能改写文案',
-          rewritePanelTitle: 'AI 改写文案',
-          rewritePanelBadge: '智能改写',
-          rewriteEmpty: '点击左侧“AI 智能改写文案”，改写结果会显示在这里。',
-          rewriteLoading: '正在改写文案...',
-          rewriteCopy: '复制改写文案',
+          aiRewrite: 'AI 生成视频脚本',
+          rewritePanelTitle: 'AI 视频脚本文案',
+          rewritePanelBadge: '视频脚本',
+          rewriteEmpty: '点击左侧“AI 生成视频脚本”，脚本文案会显示在这里。',
+          rewriteLoading: '正在生成脚本文案...',
+          rewriteCopy: '复制脚本文案',
           originalCountHint: '原文 {count} 字，点击“复制文案”可复制原文。',
-          rewrittenCountHint: '改写文案 {count} 字，可直接复制使用。',
-          rewriteFallbackHint: 'AI 服务暂不可用，已生成本地改写建议。',
+          rewrittenCountHint: '脚本文案 {count} 字，可直接复制使用。',
+          rewriteFallbackHint: 'AI 服务暂不可用，已生成本地脚本文案。',
           rewriteFailed: '改写失败，请稍后再试。',
           historyBack: '返回历史任务',
           historyDetailTitle: '任务详情',
@@ -3784,15 +3784,15 @@
           deleteUser: 'Delete',
           deleteUserConfirm: 'Delete this user? Their task history, usage, and order records will be removed.',
           userDeleted: 'User deleted',
-          aiRewrite: 'AI Rewrite Copy',
-          rewritePanelTitle: 'AI Rewritten Copy',
-          rewritePanelBadge: 'AI Rewrite',
-          rewriteEmpty: 'Click “AI Rewrite Copy” on the left. The rewritten copy will appear here.',
-          rewriteLoading: 'Rewriting copy...',
-          rewriteCopy: 'Copy Rewritten Copy',
+          aiRewrite: 'AI Video Script',
+          rewritePanelTitle: 'AI Video Script Copy',
+          rewritePanelBadge: 'Video Script',
+          rewriteEmpty: 'Click “AI Video Script” on the left. The script copy will appear here.',
+          rewriteLoading: 'Generating script copy...',
+          rewriteCopy: 'Copy Script Copy',
           originalCountHint: 'Original copy: {count} characters. Use “Copy Script” to copy it.',
-          rewrittenCountHint: 'Rewritten copy: {count} characters. Ready to copy and use.',
-          rewriteFallbackHint: 'AI provider is unavailable. A local rewrite suggestion was generated.',
+          rewrittenCountHint: 'Script copy: {count} characters. Ready to copy and use.',
+          rewriteFallbackHint: 'AI provider is unavailable. A local script copy was generated.',
           rewriteFailed: 'Rewrite failed. Please try again later.',
           historyBack: 'Back to history',
           historyDetailTitle: 'Task Details',
@@ -5029,7 +5029,7 @@
               <div class="history-detail-actions">
                 <button class="btn btn-primary" type="button" data-copy-text="${escapeHtml(description)}" onclick="copyFromDataset(this)">${t('copyContent')}</button>
                 <button class="btn btn-soft" type="button" data-copy-text="${escapeHtml(script)}" onclick="copyFromDataset(this)">${t('copyScript')}</button>
-                <button class="btn btn-soft ai-rewrite-btn" type="button" data-target="history-rewrite-${escapeHtml(item.id)}" data-copy-text="${escapeHtml(script)}" onclick="rewriteHistoryDetail(this)">${t('aiRewrite')}</button>
+                <button class="btn btn-soft ai-rewrite-btn" type="button" data-target="history-rewrite-${escapeHtml(item.id)}" data-copy-text="${escapeHtml(script)}" data-title="${escapeHtml(item.title || '')}" data-description="${escapeHtml(description)}" data-source-kind="${item.transcription?.status === 'ok' ? 'transcript' : 'metadata'}" onclick="rewriteHistoryDetail(this)">${t('aiRewrite')}</button>
               </div>
             </div>
             <div class="history-detail-copy">${escapeHtml(description)}</div>
@@ -5584,7 +5584,7 @@
                   ${assetLink(assets.bgm, t('downloadBgm'))}
                   ${assetLink(assets.cover, t('downloadCover'))}
                   ${assetLink(assets.transcript, t('downloadTranscript'))}
-                  <button class="btn btn-soft ai-rewrite-btn" type="button" data-target="${escapeHtml(rewriteId)}" onclick="rewriteFromDataset(this)">${t('aiRewrite')}</button>
+                  <button class="btn btn-soft ai-rewrite-btn" type="button" data-target="${escapeHtml(rewriteId)}" data-title="${escapeHtml(parsed.title || '')}" data-description="${escapeHtml(parsed.description || '')}" data-source-kind="${item.transcription?.status === 'ok' ? 'transcript' : 'metadata'}" onclick="rewriteFromDataset(this)">${t('aiRewrite')}</button>
                 </div>
                 ${itemWarning}
                 <div class="copy-block">
@@ -5655,6 +5655,9 @@
             method: 'POST',
             body: {
               text: sourceText,
+              title: button?.dataset?.title || '',
+              description: button?.dataset?.description || '',
+              sourceKind: button?.dataset?.sourceKind || 'script',
               language: currentLanguage
             }
           });
@@ -5692,6 +5695,9 @@
             method: 'POST',
             body: {
               text: sourceText,
+              title: button?.dataset?.title || '',
+              description: button?.dataset?.description || '',
+              sourceKind: button?.dataset?.sourceKind || 'script',
               language: currentLanguage
             }
           });
