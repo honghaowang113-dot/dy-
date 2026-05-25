@@ -3485,6 +3485,7 @@
           downloadHdVideo: '下载高清视频',
           downloadVideo: '直接下载视频',
           downloadMp3: '直接下载 MP3',
+          downloadAudio: '下载音频',
           downloadBgm: '直接下载 BGM',
           downloadCover: '下载封面',
           downloadTranscript: '下载转写',
@@ -3507,15 +3508,15 @@
           deleteUser: '删除',
           deleteUserConfirm: '确认删除这个用户？该用户的任务历史、用量和订单记录会一起删除。',
           userDeleted: '用户已删除',
-          aiRewrite: 'AI 生成视频脚本',
-          rewritePanelTitle: 'AI 视频脚本文案',
-          rewritePanelBadge: '视频脚本',
-          rewriteEmpty: '点击左侧“AI 生成视频脚本”，脚本文案会显示在这里。',
-          rewriteLoading: '正在生成脚本文案...',
-          rewriteCopy: '复制脚本文案',
+          aiRewrite: 'AI 智能改写文案',
+          rewritePanelTitle: 'AI 改写文案',
+          rewritePanelBadge: '一比一仿写',
+          rewriteEmpty: '点击左侧“AI 智能改写文案”，仿写结果会显示在这里。',
+          rewriteLoading: '正在仿写文案...',
+          rewriteCopy: '复制改写文案',
           originalCountHint: '原文 {count} 字，点击“复制文案”可复制原文。',
-          rewrittenCountHint: '脚本文案 {count} 字，可直接复制使用。',
-          rewriteFallbackHint: 'AI 服务暂不可用，已生成本地脚本文案。',
+          rewrittenCountHint: '改写文案 {count} 字，可直接复制使用。',
+          rewriteFallbackHint: 'AI 服务暂不可用，已生成本地仿写文案。',
           rewriteFailed: '改写失败，请稍后再试。',
           historyBack: '返回历史任务',
           historyDetailTitle: '任务详情',
@@ -3762,6 +3763,7 @@
           downloadHdVideo: 'Download HD Video',
           downloadVideo: 'Download Video',
           downloadMp3: 'Download MP3',
+          downloadAudio: 'Download Audio',
           downloadBgm: 'Download BGM',
           downloadCover: 'Download Cover',
           downloadTranscript: 'Download Transcript',
@@ -3784,15 +3786,15 @@
           deleteUser: 'Delete',
           deleteUserConfirm: 'Delete this user? Their task history, usage, and order records will be removed.',
           userDeleted: 'User deleted',
-          aiRewrite: 'AI Video Script',
-          rewritePanelTitle: 'AI Video Script Copy',
-          rewritePanelBadge: 'Video Script',
-          rewriteEmpty: 'Click “AI Video Script” on the left. The script copy will appear here.',
-          rewriteLoading: 'Generating script copy...',
-          rewriteCopy: 'Copy Script Copy',
+          aiRewrite: 'AI Rewrite Copy',
+          rewritePanelTitle: 'AI Rewritten Copy',
+          rewritePanelBadge: 'Imitation Rewrite',
+          rewriteEmpty: 'Click “AI Rewrite Copy” on the left. The rewritten copy will appear here.',
+          rewriteLoading: 'Rewriting copy...',
+          rewriteCopy: 'Copy Rewritten Copy',
           originalCountHint: 'Original copy: {count} characters. Use “Copy Script” to copy it.',
-          rewrittenCountHint: 'Script copy: {count} characters. Ready to copy and use.',
-          rewriteFallbackHint: 'AI provider is unavailable. A local script copy was generated.',
+          rewrittenCountHint: 'Rewritten copy: {count} characters. Ready to copy and use.',
+          rewriteFallbackHint: 'AI provider is unavailable. A local imitation rewrite was generated.',
           rewriteFailed: 'Rewrite failed. Please try again later.',
           historyBack: 'Back to history',
           historyDetailTitle: 'Task Details',
@@ -5015,7 +5017,10 @@
 
       function renderHistoryDetailItem(item, detail, index) {
         const description = item.description || item.title || t('historyNoCopy');
-        const script = item.scriptText || item.description || item.title || t('historyNoCopy');
+        const script = item.scriptText || item.description || '';
+        const scriptDisplay = script || t('historyNoCopy');
+        const audioAsset = item.assets?.mp3 || item.assets?.audio || item.assets?.bgm || '';
+        const bgmAsset = item.assets?.bgm && item.assets.bgm !== audioAsset ? item.assets.bgm : '';
         const sectionTitle = (detail.items?.length || 0) > 1
           ? `${index + 1}. ${item.title || t('historyNoTitle')}`
           : t('historyContentDescription');
@@ -5039,11 +5044,11 @@
                 <span>${escapeHtml(t('historyExtractedScript'))}</span>
               </div>
             </div>
-            <div class="history-detail-copy">${escapeHtml(script)}</div>
+            <div class="history-detail-copy">${escapeHtml(scriptDisplay)}</div>
             <div class="history-detail-downloads">
               ${assetLink(item.assets?.video, item.videoOptimization?.status === 'ok' ? t('downloadHdVideo') : t('downloadVideo'), true)}
-              ${assetLink(item.assets?.mp3, t('downloadMp3'))}
-              ${assetLink(item.assets?.bgm, t('downloadBgm'))}
+              ${assetLink(audioAsset, t('downloadAudio'))}
+              ${assetLink(bgmAsset, t('downloadBgm'))}
               ${assetLink(item.assets?.cover, t('downloadCover'))}
               ${assetLink(item.assets?.transcript, t('downloadTranscript'))}
             </div>
@@ -5547,7 +5552,7 @@
         const parsed = item.parsed || {};
         const assets = itemAssets;
         const media = assets.video
-          ? `<video controls preload="metadata" poster="${assets.cover ? apiUrl(`/api/download/${assets.cover}?inline=1`) : ''}" src="${apiUrl(`/api/download/${assets.video}?inline=1`)}"></video>`
+          ? `<video controls playsinline preload="metadata" poster="${assets.cover ? apiUrl(`/api/download/${assets.cover}?inline=1`) : ''}" src="${apiUrl(`/api/download/${assets.video}?inline=1`)}"></video>`
           : assets.cover
             ? `<img alt="视频封面" src="${apiUrl(`/api/download/${assets.cover}?inline=1`)}">`
             : '';
@@ -5557,7 +5562,9 @@
         const itemWarning = item.status === 'failed' && item.error
           ? `<p class="error-text">${t('partialFailed')}：${escapeHtml(item.error)}</p>`
           : '';
-        const scriptText = item.scriptText || parsed.description || parsed.title || '';
+        const scriptText = item.scriptText || (parsed.description && parsed.description !== parsed.title ? parsed.description : '') || '';
+        const audioAsset = assets.mp3 || assets.audio || assets.bgm || '';
+        const bgmAsset = assets.bgm && assets.bgm !== audioAsset ? assets.bgm : '';
         const videoLabel = item.videoOptimization?.status === 'ok' ? t('downloadHdVideo') : t('downloadVideo');
         const videoQualityNote = item.videoOptimization?.status === 'ok'
           ? t('videoOptimized')
@@ -5580,8 +5587,8 @@
                 </div>
                 <div class="asset-actions">
                   ${assetLink(assets.video, videoLabel, true)}
-                  ${assetLink(assets.mp3, t('downloadMp3'))}
-                  ${assetLink(assets.bgm, t('downloadBgm'))}
+                  ${assetLink(audioAsset, t('downloadAudio'))}
+                  ${assetLink(bgmAsset, t('downloadBgm'))}
                   ${assetLink(assets.cover, t('downloadCover'))}
                   ${assetLink(assets.transcript, t('downloadTranscript'))}
                   <button class="btn btn-soft ai-rewrite-btn" type="button" data-target="${escapeHtml(rewriteId)}" data-title="${escapeHtml(parsed.title || '')}" data-description="${escapeHtml(parsed.description || '')}" data-source-kind="${item.transcription?.status === 'ok' ? 'transcript' : 'metadata'}" onclick="rewriteFromDataset(this)">${t('aiRewrite')}</button>

@@ -779,18 +779,28 @@ app.get('/api/download/:assetId', async (req, res) => {
       return res.status(404).json({ error: '文件还没有生成。' });
     }
 
+    const upstreamHeaders = requestHeaders();
+    if (req.headers.range) {
+      upstreamHeaders.Range = req.headers.range;
+    }
+
     const upstream = await fetchWithTimeout(asset.remoteUrl, {
-      headers: requestHeaders()
+      headers: upstreamHeaders
     }, 60000);
     if (!upstream.ok || !upstream.body) {
       throw new Error(`远程文件下载失败：HTTP ${upstream.status}`);
     }
 
+    res.status(upstream.status === 206 ? 206 : 200);
+    res.setHeader('Accept-Ranges', upstream.headers.get('accept-ranges') || 'bytes');
     res.setHeader('Content-Type', upstream.headers.get('content-type') || asset.contentType || 'application/octet-stream');
     res.setHeader('Content-Disposition', contentDisposition(asset.filename, req.query.inline === '1'));
-    const length = upstream.headers.get('content-length');
-    if (length) {
-      res.setHeader('Content-Length', length);
+    res.setHeader('X-Accel-Buffering', 'no');
+    for (const header of ['content-length', 'content-range', 'etag', 'last-modified']) {
+      const value = upstream.headers.get(header);
+      if (value) {
+        res.setHeader(header, value);
+      }
     }
     await pipeResponse(Readable.fromWeb(upstream.body), res);
   } catch (error) {
@@ -828,7 +838,7 @@ app.get('/api/jobs/:id/archive', async (req, res) => {
     if (!item.assets) continue;
     const folder = archiveFolderName(item, itemIndex);
     let assetIndex = 0;
-    for (const assetId of Object.values(item.assets)) {
+    for (const assetId of [...new Set(Object.values(item.assets).filter(Boolean))]) {
       const asset = assets.get(assetId);
       if (!asset) continue;
       try {
@@ -1496,7 +1506,7 @@ function publicHistoryItemFromJob(item, entry, index) {
     status: String(item.status || entry.status),
     title: String(parsed.title || entry.titles[index] || ''),
     description: String(parsed.description || entry.descriptions[index] || parsed.title || ''),
-    scriptText: String(item.scriptText || parsed.description || parsed.title || entry.descriptions[index] || ''),
+    scriptText: String(item.scriptText || copyTextFromParsed(parsed) || ''),
     coverUrl: String(parsed.coverUrl || entry.coverUrls[index] || localHistoryCoverUrl(entry.jobId, index)),
     author: String(parsed.author || ''),
     provider: String(parsed.provider || 'douyin'),
@@ -1518,7 +1528,7 @@ function publicHistoryItemFromEntry(entry, index) {
     status: String(saved.status || entry.status),
     title: String(saved.title || entry.titles[index] || ''),
     description: String(saved.description || entry.descriptions[index] || saved.title || entry.titles[index] || ''),
-    scriptText: String(saved.scriptText || saved.description || entry.descriptions[index] || saved.title || entry.titles[index] || ''),
+    scriptText: String(saved.scriptText || textIfDifferent(saved.description, saved.title || entry.titles[index]) || ''),
     coverUrl: String(saved.coverUrl || entry.coverUrls[index] || localHistoryCoverUrl(entry.jobId, index)),
     author: String(saved.author || ''),
     provider: String(saved.provider || 'douyin'),
@@ -2004,7 +2014,7 @@ function historyItemFromCompletedJobItem(item, index) {
     status: String(item.status || 'done'),
     title: String(parsed.title || item.inputUrl || ''),
     description: String(parsed.description || parsed.title || ''),
-    scriptText: String(item.scriptText || parsed.description || parsed.title || ''),
+    scriptText: String(item.scriptText || copyTextFromParsed(parsed) || ''),
     coverUrl: String(parsed.coverUrl || ''),
     author: String(parsed.author || ''),
     provider: String(parsed.provider || 'douyin'),
@@ -2088,7 +2098,9 @@ async function processJob(job) {
         item.assets.video = sourceVideoAssetId;
       }
       if (parsed.musicUrl) {
-        item.assets.bgm = registerRemoteAsset(job, item, 'bgm', parsed.musicUrl, `${safeFilename(parsed.musicTitle || parsed.title)}-bgm.mp3`, 'audio/mpeg');
+        const audioAssetId = registerRemoteAsset(job, item, 'audio', parsed.musicUrl, `${safeFilename(parsed.musicTitle || parsed.title)}-audio.mp3`, 'audio/mpeg');
+        item.assets.audio = audioAssetId;
+        item.assets.bgm = audioAssetId;
       }
 
       if (!AUTO_MEDIA_PROCESSING) {
@@ -2956,7 +2968,7 @@ async function rewriteCopy({ sourceText, title = '', description = '', sourceKin
       text: fallback,
       sourceLength,
       rewrittenLength: fallback.length,
-      reason: language === 'en' ? 'AI rewrite provider is not configured. A local video script was generated.' : 'AI 改写服务未配置，已生成本地脚本文案。'
+      reason: language === 'en' ? 'AI rewrite provider is not configured. A local imitation copy was generated.' : 'AI 改写服务未配置，已生成本地仿写文案。'
     };
   }
 
@@ -3009,7 +3021,7 @@ async function rewriteCopy({ sourceText, title = '', description = '', sourceKin
         text: fallback,
         sourceLength,
         rewrittenLength: fallback.length,
-        reason: language === 'en' ? 'AI provider returned empty content. A local video script was generated.' : 'AI 服务未返回有效文案，已生成本地脚本文案。'
+        reason: language === 'en' ? 'AI provider returned empty content. A local imitation copy was generated.' : 'AI 服务未返回有效文案，已生成本地仿写文案。'
       };
     }
     return {
@@ -3027,7 +3039,7 @@ async function rewriteCopy({ sourceText, title = '', description = '', sourceKin
       text: fallback,
       sourceLength,
       rewrittenLength: fallback.length,
-      reason: error.message || (language === 'en' ? 'AI rewrite failed. A local video script was generated.' : 'AI 改写失败，已生成本地脚本文案。')
+      reason: error.message || (language === 'en' ? 'AI rewrite failed. A local imitation copy was generated.' : 'AI 改写失败，已生成本地仿写文案。')
     };
   }
 }
@@ -3035,19 +3047,17 @@ async function rewriteCopy({ sourceText, title = '', description = '', sourceKin
 function rewriteSystemPrompt(language = 'zh') {
   if (language === 'en') {
     return [
-      'You are a short-video script copywriter.',
-      'Turn the provided video source material into a ready-to-record short-video voiceover script.',
-      'Output only the script copy, with no analysis or explanations.',
-      'Use a clear structure: hook, body, and closing call-to-action.',
-      'Preserve the original facts and do not invent prices, claims, data, effects, or promises.'
+      'You are a short-video copy imitation assistant.',
+      'Rewrite the provided video copy as a one-to-one imitation: keep the same structure, rhythm, order of ideas, tone, and selling points.',
+      'Output only the rewritten copy itself, with no labels, no outline, no analysis, and no explanatory phrases.',
+      'Do not add unsupported prices, claims, data, effects, promises, or new facts.'
     ].join(' ');
   }
   return [
-    '你是短视频口播脚本文案改写助手。',
-    '把用户提供的视频原文、标题或描述改写成可直接拍摄和口播的视频脚本文案。',
-    '只输出脚本文案，不输出分析、解释或提示语。',
-    '脚本需要包含开场钩子、正文展开和结尾引导。',
-    '保留原意，不编造原文没有的价格、功效、数据、承诺或事实。'
+    '你是短视频文案一比一仿写助手。',
+    '参照用户提供的视频文案进行仿写，保持原文的结构、节奏、信息顺序、语气和卖点表达。',
+    '只输出仿写后的文案本身，不要标注开场、正文、结尾、脚本、标题、提纲或解释。',
+    '不编造原文没有的价格、功效、数据、承诺或事实。'
   ].join('');
 }
 
@@ -3062,25 +3072,28 @@ function rewriteUserPrompt({ sourceText = '', title = '', description = '', sour
     return [
       `Source kind: ${sourceKind || 'script'}`,
       material,
-      'Generate one polished short-video voiceover script from the material above.',
-      'If the available copy is only a title or description, expand it into a concise script without inventing unsupported facts.',
-      'Do not return a title, outline, or explanation.'
+      'Create a one-to-one imitation of the available video copy above.',
+      'Keep the same information order and sentence rhythm as much as possible.',
+      'If only title or description is available, imitate that material without inventing unsupported details.',
+      'Return only the rewritten copy, with no labels or explanation.'
     ].join('\n\n');
   }
 
   return [
     `素材类型：${sourceKind || 'script'}`,
     material,
-    '请基于以上素材生成一版中文短视频口播脚本文案。',
-    '如果可用原文只有标题或描述，请在不编造事实的前提下扩写成完整、顺口、可拍摄的脚本。',
-    '不要返回标题、提纲或解释。'
+    '请参照以上视频文案做一版一比一仿写。',
+    '尽量保持原文的信息顺序、句式节奏、表达重点和口吻，只换一种自然说法。',
+    '如果只有标题或描述，就基于现有素材仿写，不要编造额外事实。',
+    '只返回仿写后的文案，不要加“开场/正文/结尾/脚本/标题”等标注，也不要解释。'
   ].join('\n\n');
 }
 
 function cleanRewriteText(value) {
   return String(value || '')
     .replace(/^["'“”]+|["'“”]+$/g, '')
-    .replace(/^(改写后[:：]|文案[:：]|脚本文案[:：]|rewritten copy:|script copy:)/i, '')
+    .replace(/^(改写后[:：]|文案[:：]|脚本文案[:：]|仿写文案[:：]|rewritten copy:|script copy:)/i, '')
+    .replace(/^\s*(【?(开场|正文|结尾|脚本|标题)】?\s*[:：]\s*)/gm, '')
     .trim()
     .slice(0, 3000);
 }
@@ -3092,26 +3105,18 @@ function localRewriteCopy(sourceText, language = 'zh', context = {}) {
     .trim();
   const core = cleaned || (language === 'en' ? 'This video shares a practical idea worth remembering.' : '这条视频分享了一个值得关注的实用内容');
   if (language === 'en') {
-    return [
-      `Hook: ${core}`,
-      'Body: Keep the key point clear, show the useful detail, and explain why it matters in a simple way.',
-      'Closing: Save this idea and use it when you need a quick reference.'
-    ].join('\n');
+    return `${core}\n\nHere is the same idea rewritten in a similar short-video style: clear, direct, and ready to use without changing the original facts.`;
   }
   const body = core.replace(/[。！？!?]+$/g, '');
-  return [
-    `【开场】${body}，这个点一定要看完。`,
-    '【正文】先把核心信息讲清楚，再结合使用场景展开，让观众知道它解决什么问题、适合什么时候参考。',
-    '【结尾】如果你也需要整理类似内容，可以先收藏起来，后面直接对照使用。'
-  ].join('\n');
+  return `${body}。换一种说法就是：重点不变，表达更顺一点，按照原来的信息顺序讲清楚，让观众一看就知道这个内容解决什么问题、适合在什么场景下参考。`;
 }
 
 function rewriteErrorMessage(status, json = {}, language = 'zh') {
   const providerMessage = json.error?.message || json.message || '';
   if (language === 'en') {
-    return `AI rewrite provider returned HTTP ${status}${providerMessage ? `: ${providerMessage}` : ''}. A local video script was generated.`;
+    return `AI rewrite provider returned HTTP ${status}${providerMessage ? `: ${providerMessage}` : ''}. A local imitation copy was generated.`;
   }
-  return `AI 改写接口返回 HTTP ${status}${providerMessage ? `：${providerMessage}` : ''}，已生成本地脚本文案。`;
+  return `AI 改写接口返回 HTTP ${status}${providerMessage ? `：${providerMessage}` : ''}，已生成本地仿写文案。`;
 }
 
 async function transcribeIfConfigured(mp3Path) {
@@ -3234,6 +3239,7 @@ function archiveAssetName(asset, itemIndex, assetIndex) {
     'source-video': 'video-source',
     cover: 'cover',
     mp3: 'audio',
+    audio: 'audio',
     bgm: 'bgm',
     transcript: 'transcript'
   }[asset.type] || `file-${assetIndex}`;
@@ -3319,10 +3325,25 @@ function buildScriptText(parsed = {}) {
   return firstText(
     parsed.scriptText,
     parsed.transcriptText,
-    parsed.description,
-    parsed.title,
+    copyTextFromParsed(parsed),
     ''
   );
+}
+
+function copyTextFromParsed(parsed = {}) {
+  return firstText(
+    parsed.scriptText,
+    parsed.transcriptText,
+    textIfDifferent(parsed.description, parsed.title),
+    ''
+  );
+}
+
+function textIfDifferent(value = '', compare = '') {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const other = String(compare || '').trim();
+  return other && text === other ? '' : text;
 }
 
 function clamp(value, min, max) {
