@@ -687,49 +687,65 @@ app.get('/api/health', (_req, res) => {
 app.get('/api/providers/test', async (req, res) => {
   try {
     const targetUrl = validateDouyinUrl(String(req.query.url || ''));
+    const startedAt = Date.now();
     const candidateUrls = await getCandidateUrls(targetUrl);
-    const results = [];
+    const results = await Promise.all(
+      getEnabledProviders().map((provider) => testProvider(provider, targetUrl, candidateUrls))
+    );
 
-    for (const provider of getEnabledProviders()) {
-      if (!provider.isConfigured()) {
-        results.push({
-          provider: provider.providerName,
-          configured: false,
-          status: 'skipped',
-          message: '未配置，已跳过'
-        });
-        continue;
-      }
-
-      const startedAt = Date.now();
-      try {
-        const parsed = await provider(candidateUrls[0], { originalUrl: targetUrl, candidateUrls });
-        results.push({
-          provider: provider.providerName,
-          configured: true,
-          status: 'ok',
-          elapsedMs: Date.now() - startedAt,
-          title: parsed.title,
-          hasVideo: Boolean(parsed.videoUrl),
-          hasCover: Boolean(parsed.coverUrl),
-          hasMusic: Boolean(parsed.musicUrl)
-        });
-      } catch (error) {
-        results.push({
-          provider: provider.providerName,
-          configured: true,
-          status: 'failed',
-          elapsedMs: Date.now() - startedAt,
-          message: error.message
-        });
-      }
-    }
-
-    res.json({ url: targetUrl, candidateUrls, results });
+    res.json({
+      url: targetUrl,
+      candidateUrls,
+      elapsedMs: Date.now() - startedAt,
+      results
+    });
   } catch (error) {
     res.status(400).json({ error: error.message || 'Provider 测试失败。' });
   }
 });
+
+async function testProvider(provider, targetUrl, candidateUrls) {
+  if (!provider.isConfigured()) {
+    return {
+      provider: provider.providerName,
+      configured: false,
+      status: 'skipped',
+      elapsedMs: 0,
+      message: '未配置，已跳过'
+    };
+  }
+
+  const startedAt = Date.now();
+  const failures = [];
+  for (const candidateUrl of candidateUrls) {
+    const candidateStartedAt = Date.now();
+    try {
+      const parsed = await provider(candidateUrl, { originalUrl: targetUrl, candidateUrls });
+      return {
+        provider: provider.providerName,
+        configured: true,
+        status: 'ok',
+        elapsedMs: Date.now() - startedAt,
+        candidateElapsedMs: Date.now() - candidateStartedAt,
+        candidateHost: safeUrlHost(candidateUrl),
+        title: parsed.title,
+        hasVideo: Boolean(parsed.videoUrl),
+        hasCover: Boolean(parsed.coverUrl),
+        hasMusic: Boolean(parsed.musicUrl)
+      };
+    } catch (error) {
+      failures.push(`${safeUrlHost(candidateUrl)}: ${error.message || '解析失败'}`);
+    }
+  }
+
+  return {
+    provider: provider.providerName,
+    configured: true,
+    status: 'failed',
+    elapsedMs: Date.now() - startedAt,
+    message: summarizeFailures(failures)
+  };
+}
 
 app.get('/api/download/:assetId', async (req, res) => {
   const asset = assets.get(req.params.assetId);
