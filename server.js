@@ -628,13 +628,11 @@ app.post('/api/rewrite', async (req, res) => {
       return res.status(401).json({ error: '请先登录后再使用 AI 改写。' });
     }
     const sourceText = String(req.body?.text || '').trim();
-    const sourceTitle = String(req.body?.title || '').trim().slice(0, 300);
-    const sourceDescription = String(req.body?.description || '').trim().slice(0, 1200);
     const sourceKind = String(req.body?.sourceKind || 'script').trim().slice(0, 40) || 'script';
     const language = String(req.body?.language || 'zh').toLowerCase() === 'en' ? 'en' : 'zh';
-    const sourceLength = [sourceText, sourceTitle, sourceDescription].filter(Boolean).join('\n').length;
+    const sourceLength = sourceText.length;
     if (sourceLength < 4) {
-      return res.status(400).json({ error: language === 'en' ? 'Not enough copy to rewrite.' : '可改写的文案太短。' });
+      return res.status(400).json({ error: language === 'en' ? 'No audio script to rewrite yet.' : '还没有可改写的视频音频文案。' });
     }
     if (sourceLength > 4000) {
       return res.status(400).json({ error: language === 'en' ? 'Copy is too long. Keep it under 4000 characters.' : '文案过长，请控制在 4000 字以内。' });
@@ -645,8 +643,6 @@ app.post('/api/rewrite', async (req, res) => {
     }
     const result = await rewriteCopy({
       sourceText,
-      title: sourceTitle,
-      description: sourceDescription,
       sourceKind,
       language
     });
@@ -1530,7 +1526,7 @@ function publicHistoryItemFromEntry(entry, index) {
     status: String(saved.status || entry.status),
     title: String(saved.title || entry.titles[index] || ''),
     description: String(saved.description || entry.descriptions[index] || saved.title || entry.titles[index] || ''),
-    scriptText: String(saved.scriptText || saved.description || entry.descriptions[index] || saved.title || entry.titles[index] || ''),
+    scriptText: String(saved.scriptText || ''),
     coverUrl: String(saved.coverUrl || entry.coverUrls[index] || localHistoryCoverUrl(entry.jobId, index)),
     author: String(saved.author || ''),
     provider: String(saved.provider || 'douyin'),
@@ -2110,6 +2106,10 @@ async function processJob(job) {
           updateJobProgress(job, index, 0.68);
           try {
             await generateAudioAsset(job, item, sourceVideoAssetId, parsed, itemDir);
+            item.status = 'transcribing';
+            item.stage = '正在转写音频文案';
+            updateJobProgress(job, index, 0.86);
+            await transcribeAudioAsset(job, item, parsed, itemDir);
           } catch (error) {
             item.audioExtraction = {
               status: 'skipped',
@@ -2119,15 +2119,19 @@ async function processJob(job) {
         }
 
         item.status = 'done';
-        item.stage = item.assets.audio ? '已解析，音频已生成' : '已解析';
+        item.stage = item.transcription?.status === 'ok'
+          ? '已解析，文案已生成'
+          : item.assets.audio ? '已解析，音频已生成' : '已解析';
         item.videoOptimization = {
           status: 'skipped',
           reason: '已启用快速解析模式，保留原始视频下载地址。'
         };
-        item.transcription = {
-          status: 'skipped',
-          reason: '已启用快速解析模式，跳过文案转写。'
-        };
+        if (!item.transcription) {
+          item.transcription = {
+            status: 'skipped',
+            reason: item.assets.audio ? '音频已生成，文案转写未生成。' : '音频未生成，跳过文案转写。'
+          };
+        }
         updateJobProgress(job, index, 1);
         continue;
       }
@@ -2181,24 +2185,7 @@ async function processJob(job) {
       item.stage = '正在生成文案转写';
       updateJobProgress(job, index, 0.72);
 
-      const mp3Asset = assets.get(item.assets.mp3);
-      if (mp3Asset) {
-        const transcription = await transcribeIfConfigured(mp3Asset.localPath);
-        if (transcription.status === 'ok') {
-          const transcriptPath = join(itemDir, 'transcript.txt');
-          await writeFile(transcriptPath, transcription.text, 'utf8');
-          item.assets.transcript = registerLocalAsset(job, item, 'transcript', transcriptPath, `${safeFilename(parsed.title)}-transcript.txt`, 'text/plain; charset=utf-8');
-          item.transcription = { status: 'ok' };
-          item.scriptText = firstText(transcription.text, item.scriptText);
-        } else {
-          item.transcription = transcription;
-        }
-      } else {
-        item.transcription = {
-          status: 'skipped',
-          reason: mp3Error ? `MP3 生成失败：${mp3Error}` : '未生成 MP3，跳过转写。'
-        };
-      }
+      await transcribeAudioAsset(job, item, parsed, itemDir, mp3Error);
 
       item.status = 'done';
       item.stage = '已完成';
@@ -2824,6 +2811,32 @@ async function generateAudioAsset(job, item, videoAssetId, parsed = {}, itemDir 
   return audioAssetId;
 }
 
+async function transcribeAudioAsset(job, item, parsed = {}, itemDir = '', audioError = '') {
+  const audioAsset = assets.get(item.assets?.mp3 || item.assets?.audio);
+  if (!audioAsset) {
+    item.transcription = {
+      status: 'skipped',
+      reason: audioError ? `音频生成失败：${audioError}` : '未生成音频，跳过转写。'
+    };
+    return item.transcription;
+  }
+
+  const transcription = await transcribeIfConfigured(audioAsset.localPath);
+  if (transcription.status !== 'ok') {
+    item.transcription = transcription;
+    return transcription;
+  }
+
+  const targetDir = itemDir || join(TMP_ROOT, job.id, item.id);
+  await mkdir(targetDir, { recursive: true });
+  const transcriptPath = join(targetDir, 'transcript.txt');
+  await writeFile(transcriptPath, transcription.text, 'utf8');
+  item.assets.transcript = registerLocalAsset(job, item, 'transcript', transcriptPath, `${safeFilename(parsed.title || item.id)}-transcript.txt`, 'text/plain; charset=utf-8');
+  item.transcription = { status: 'ok' };
+  item.scriptText = String(transcription.text || '').trim();
+  return item.transcription;
+}
+
 async function downloadRemote(remoteUrl, targetPath) {
   const response = await fetchWithTimeout(remoteUrl, { headers: requestHeaders() }, 90000);
   if (!response.ok || !response.body) {
@@ -2985,10 +2998,10 @@ function runFfmpegCover(inputPath, outputPath) {
   });
 }
 
-async function rewriteCopy({ sourceText, title = '', description = '', sourceKind = 'script', language = 'zh' }) {
+async function rewriteCopy({ sourceText, sourceKind = 'script', language = 'zh' }) {
   const apiKey = process.env.REWRITE_API_KEY || process.env.TRANSCRIPTION_API_KEY;
-  const rewriteContext = { title, description, sourceKind };
-  const sourceLength = [sourceText, title, description].filter(Boolean).join('\n').length;
+  const rewriteContext = { sourceKind };
+  const sourceLength = sourceText.length;
   if (!apiKey) {
     const fallback = localRewriteCopy(sourceText, language, rewriteContext);
     return {
@@ -3004,7 +3017,7 @@ async function rewriteCopy({ sourceText, title = '', description = '', sourceKin
   const baseUrl = process.env.REWRITE_BASE_URL || 'https://api.siliconflow.cn/v1/chat/completions';
   const model = process.env.REWRITE_MODEL || 'Qwen/Qwen2.5-7B-Instruct';
   const systemPrompt = rewriteSystemPrompt(language);
-  const userPrompt = rewriteUserPrompt({ sourceText, title, description, sourceKind, language });
+  const userPrompt = rewriteUserPrompt({ sourceText, sourceKind, language });
 
   try {
     const response = await fetchWithTimeout(baseUrl, {
@@ -3090,12 +3103,8 @@ function rewriteSystemPrompt(language = 'zh') {
   ].join('');
 }
 
-function rewriteUserPrompt({ sourceText = '', title = '', description = '', sourceKind = 'script', language = 'zh' }) {
-  const material = [
-    title ? `${language === 'en' ? 'Video title' : '视频标题'}：${title}` : '',
-    description ? `${language === 'en' ? 'Video description' : '视频描述'}：${description}` : '',
-    sourceText ? `${language === 'en' ? 'Available script/copy' : '可用原文/转写文案'}：\n${sourceText}` : ''
-  ].filter(Boolean).join('\n\n');
+function rewriteUserPrompt({ sourceText = '', sourceKind = 'script', language = 'zh' }) {
+  const material = `${language === 'en' ? 'Audio transcript / video script' : '视频音频转写文案'}：\n${sourceText}`;
 
   if (language === 'en') {
     return [
@@ -3103,7 +3112,6 @@ function rewriteUserPrompt({ sourceText = '', title = '', description = '', sour
       material,
       'Create a one-to-one imitation of the available video copy above.',
       'Keep the same information order and sentence rhythm as much as possible.',
-      'If only title or description is available, imitate that material without inventing unsupported details.',
       'Return only the rewritten copy, with no labels or explanation.'
     ].join('\n\n');
   }
@@ -3113,7 +3121,6 @@ function rewriteUserPrompt({ sourceText = '', title = '', description = '', sour
     material,
     '请参照以上视频文案做一版一比一仿写。',
     '尽量保持原文的信息顺序、句式节奏、表达重点和口吻，只换一种自然说法。',
-    '如果只有标题或描述，就基于现有素材仿写，不要编造额外事实。',
     '只返回仿写后的文案，不要加“开场/正文/结尾/脚本/标题”等标注，也不要解释。'
   ].join('\n\n');
 }
@@ -3127,8 +3134,8 @@ function cleanRewriteText(value) {
     .slice(0, 3000);
 }
 
-function localRewriteCopy(sourceText, language = 'zh', context = {}) {
-  const cleaned = firstText(sourceText, context.description, context.title)
+function localRewriteCopy(sourceText, language = 'zh') {
+  const cleaned = String(sourceText || '')
     .replace(/https?:\/\/\S+/g, '')
     .replace(/\s+/g, ' ')
     .trim();
@@ -3364,8 +3371,6 @@ function copyTextFromParsed(parsed = {}) {
   return firstText(
     parsed.scriptText,
     parsed.transcriptText,
-    parsed.description,
-    parsed.title,
     ''
   );
 }

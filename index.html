@@ -4938,7 +4938,7 @@
               status: item.status || entry.status,
               title: parsed.title || entry.titles?.[index] || t('historyNoTitle'),
               description: parsed.description || entry.descriptions?.[index] || parsed.title || '',
-              scriptText: item.scriptText || parsed.description || parsed.title || entry.descriptions?.[index] || '',
+              scriptText: item.scriptText || '',
               coverUrl: assetPreviewUrl(item.assets?.cover) || parsed.coverUrl || historyCoverUrl(entry, index),
               author: parsed.author || '',
               provider: parsed.provider || 'douyin',
@@ -4970,7 +4970,7 @@
               status: saved.status || entry.status,
               title: saved.title || entry.titles?.[index] || t('historyNoTitle'),
               description: saved.description || entry.descriptions?.[index] || saved.title || entry.titles?.[index] || '',
-              scriptText: saved.scriptText || saved.description || entry.descriptions?.[index] || saved.title || entry.titles?.[index] || '',
+              scriptText: saved.scriptText || '',
               coverUrl: saved.coverUrl || historyCoverUrl(entry, index),
               author: saved.author || '',
               provider: saved.provider || 'douyin',
@@ -5017,7 +5017,7 @@
 
       function renderHistoryDetailItem(item, detail, index) {
         const description = item.description || item.title || t('historyNoCopy');
-        const script = item.scriptText || item.description || item.title || '';
+        const script = item.scriptText || '';
         const scriptDisplay = script || t('historyNoCopy');
         const audioAsset = item.assets?.mp3 || item.assets?.audio || item.assets?.bgm || '';
         const bgmAsset = item.assets?.bgm && item.assets.bgm !== audioAsset ? item.assets.bgm : '';
@@ -5034,7 +5034,7 @@
               <div class="history-detail-actions">
                 <button class="btn btn-primary" type="button" data-copy-text="${escapeHtml(description)}" onclick="copyFromDataset(this)">${t('copyContent')}</button>
                 <button class="btn btn-soft" type="button" data-copy-text="${escapeHtml(script)}" onclick="copyFromDataset(this)">${t('copyScript')}</button>
-                <button class="btn btn-soft ai-rewrite-btn" type="button" data-target="history-rewrite-${escapeHtml(item.id)}" data-copy-text="${escapeHtml(script)}" data-title="${escapeHtml(item.title || '')}" data-description="${escapeHtml(description)}" data-source-kind="${item.transcription?.status === 'ok' ? 'transcript' : 'metadata'}" onclick="rewriteHistoryDetail(this)">${t('aiRewrite')}</button>
+                <button class="btn btn-soft ai-rewrite-btn" type="button" data-target="history-rewrite-${escapeHtml(item.id)}" data-copy-text="${escapeHtml(script)}" data-source-kind="transcript" onclick="rewriteHistoryDetail(this)">${t('aiRewrite')}</button>
               </div>
             </div>
             <div class="history-detail-copy">${escapeHtml(description)}</div>
@@ -5564,7 +5564,7 @@
         const itemWarning = item.status === 'failed' && item.error
           ? `<p class="error-text">${t('partialFailed')}：${escapeHtml(item.error)}</p>`
           : '';
-        const scriptText = item.scriptText || parsed.description || parsed.title || '';
+        const scriptText = item.scriptText || '';
         const audioAsset = assets.mp3 || assets.audio || assets.bgm || '';
         const bgmAsset = assets.bgm && assets.bgm !== audioAsset ? assets.bgm : '';
         const videoLabel = item.videoOptimization?.status === 'ok' ? t('downloadHdVideo') : t('downloadVideo');
@@ -5593,7 +5593,7 @@
                   ${assetLink(bgmAsset, t('downloadBgm'))}
                   ${assetLink(assets.cover, t('downloadCover'))}
                   ${assetLink(assets.transcript, t('downloadTranscript'))}
-                  <button class="btn btn-soft ai-rewrite-btn" type="button" data-target="${escapeHtml(rewriteId)}" data-title="${escapeHtml(parsed.title || '')}" data-description="${escapeHtml(parsed.description || '')}" data-source-kind="${item.transcription?.status === 'ok' ? 'transcript' : 'metadata'}" onclick="rewriteFromDataset(this)">${t('aiRewrite')}</button>
+                  <button class="btn btn-soft ai-rewrite-btn" type="button" data-target="${escapeHtml(rewriteId)}" data-source-kind="transcript" onclick="rewriteFromDataset(this)">${t('aiRewrite')}</button>
                 </div>
                 ${itemWarning}
                 <div class="copy-block">
@@ -5664,8 +5664,6 @@
             method: 'POST',
             body: {
               text: sourceText,
-              title: button?.dataset?.title || '',
-              description: button?.dataset?.description || '',
               sourceKind: button?.dataset?.sourceKind || 'script',
               language: currentLanguage
             }
@@ -5704,8 +5702,6 @@
             method: 'POST',
             body: {
               text: sourceText,
-              title: button?.dataset?.title || '',
-              description: button?.dataset?.description || '',
               sourceKind: button?.dataset?.sourceKind || 'script',
               language: currentLanguage
             }
