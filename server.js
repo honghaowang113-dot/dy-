@@ -115,6 +115,7 @@ const LOG_PROVIDER_TIMINGS = String(process.env.LOG_PROVIDER_TIMINGS ?? 'true').
 const VIDEO_OPTIMIZE_CRF = clamp(Number(process.env.VIDEO_OPTIMIZE_CRF || 18), 14, 28);
 const VIDEO_OPTIMIZE_PRESET = process.env.VIDEO_OPTIMIZE_PRESET || 'medium';
 const PROVIDER_REQUEST_TIMEOUT_MS = clamp(Number(process.env.PROVIDER_REQUEST_TIMEOUT_MS || 9000), 3000, 30000);
+const TIKHUB_SECONDARY_ENDPOINT_DELAY_MS = clamp(Number(process.env.TIKHUB_SECONDARY_ENDPOINT_DELAY_MS || 600), 0, PROVIDER_REQUEST_TIMEOUT_MS);
 const REDIRECT_TIMEOUT_MS = clamp(Number(process.env.REDIRECT_TIMEOUT_MS || 4500), 2000, 12000);
 const REDIRECT_FAST_BUDGET_MS = clamp(Number(process.env.REDIRECT_FAST_BUDGET_MS || 500), 100, 8000);
 const REDIRECT_MAX_HOPS = clamp(Number(process.env.REDIRECT_MAX_HOPS || 3), 1, 5);
@@ -663,6 +664,7 @@ app.get('/api/health', (_req, res) => {
       maxDownloadMb: Number(process.env.MAX_DOWNLOAD_MB || 200),
       jobTtlMinutes: Number(process.env.JOB_TTL_MINUTES || 120),
       providerTimeoutMs: PROVIDER_REQUEST_TIMEOUT_MS,
+      tikhubSecondaryEndpointDelayMs: TIKHUB_SECONDARY_ENDPOINT_DELAY_MS,
       redirectTimeoutMs: REDIRECT_TIMEOUT_MS,
       redirectFastBudgetMs: REDIRECT_FAST_BUDGET_MS,
       parseProviderConcurrency: PARSE_PROVIDER_CONCURRENCY,
@@ -720,7 +722,12 @@ async function testProvider(provider, targetUrl, candidateUrls) {
   for (const candidateUrl of candidateUrls) {
     const candidateStartedAt = Date.now();
     try {
-      const parsed = await provider(candidateUrl, { originalUrl: targetUrl, candidateUrls });
+      const parsed = await provider(candidateUrl, {
+        originalUrl: targetUrl,
+        candidateUrls,
+        diagnostic: true,
+        tikhubSecondaryEndpointDelayMs: 0
+      });
       return {
         provider: provider.providerName,
         configured: true,
@@ -2412,15 +2419,19 @@ parseWithMxin.providerName = 'Mxin';
 parseWithMxin.providerKey = 'mxin';
 parseWithMxin.isConfigured = () => true;
 
-async function parseWithTikHub(url) {
+async function parseWithTikHub(url, context = {}) {
   const baseUrl = process.env.TIKHUB_BASE_URL || 'https://api.tikhub.io';
   const endpoints = [
     '/api/v1/douyin/app/v3/fetch_one_video_by_share_url',
     '/api/v1/douyin/web/fetch_one_video_by_share_url'
   ];
+  const secondaryEndpointDelayMs = Number.isFinite(context.tikhubSecondaryEndpointDelayMs)
+    ? context.tikhubSecondaryEndpointDelayMs
+    : TIKHUB_SECONDARY_ENDPOINT_DELAY_MS;
 
-  return firstSuccessfulPromise(endpoints.map((path) => (
-    (async () => {
+  return firstSuccessfulDelayed(endpoints.map((path) => ({
+    label: path,
+    run: async () => {
       const endpoint = new URL(path, baseUrl);
       endpoint.searchParams.set('share_url', url);
       const json = await fetchJson(endpoint, {
@@ -2429,34 +2440,83 @@ async function parseWithTikHub(url) {
         }
       });
       return normalizeTikHubResponse(json);
-    })().catch((error) => {
-      throw new Error(`${path}: ${error.message}`);
-    })
-  )));
+    }
+  })), secondaryEndpointDelayMs, (attempt, error) => `${attempt.label}: ${error.message}`);
 }
 parseWithTikHub.providerName = 'TikHub';
 parseWithTikHub.providerKey = 'tikhub';
 parseWithTikHub.isConfigured = () => Boolean(process.env.TIKHUB_API_KEY);
 
-function firstSuccessfulPromise(promises) {
+function firstSuccessfulDelayed(tasks, delayMs = 0, formatFailure = (_task, error) => error.message || '请求失败') {
   return new Promise((resolve, reject) => {
     const failures = [];
-    let pending = promises.length;
-    if (!pending) {
+    let cursor = 0;
+    let pending = 0;
+    let settled = false;
+    let fallbackTimer = null;
+
+    if (!tasks.length) {
       reject(new Error('No attempts configured.'));
       return;
     }
-    for (const promise of promises) {
-      promise
-        .then(resolve)
+
+    const maybeReject = () => {
+      if (!settled && cursor >= tasks.length && pending === 0) {
+        reject(new Error(summarizeFailures(failures)));
+      }
+    };
+
+    const clearFallbackTimer = () => {
+      if (fallbackTimer) {
+        clearTimeout(fallbackTimer);
+        fallbackTimer = null;
+      }
+    };
+
+    const scheduleFallback = () => {
+      if (settled || fallbackTimer || cursor >= tasks.length) return;
+      fallbackTimer = setTimeout(() => {
+        fallbackTimer = null;
+        launchNext();
+      }, delayMs);
+    };
+
+    const launchNext = () => {
+      if (settled || cursor >= tasks.length) {
+        maybeReject();
+        return;
+      }
+
+      const task = tasks[cursor];
+      cursor += 1;
+      pending += 1;
+
+      Promise.resolve()
+        .then(() => task.run())
+        .then((value) => {
+          if (settled) return;
+          settled = true;
+          clearFallbackTimer();
+          resolve(value);
+        })
         .catch((error) => {
-          failures.push(error.message || '请求失败');
+          failures.push(formatFailure(task, error));
+        })
+        .finally(() => {
           pending -= 1;
-          if (pending === 0) {
-            reject(new Error(summarizeFailures(failures)));
+          if (settled) return;
+          if (cursor < tasks.length) {
+            clearFallbackTimer();
+            launchNext();
+            return;
           }
+          maybeReject();
         });
-    }
+
+      scheduleFallback();
+    };
+
+    launchNext();
   });
 }
 
