@@ -3511,13 +3511,14 @@
           aiRewrite: 'AI 智能改写文案',
           rewritePanelTitle: 'AI 改写文案',
           rewritePanelBadge: '一比一仿写',
-          rewriteEmpty: '点击左侧“AI 智能改写文案”，仿写结果会显示在这里。',
+          rewriteEmpty: '点击左侧“AI 智能改写文案”，这里会显示基于视频音频文案的一比一仿写。',
           rewriteLoading: '正在仿写文案...',
           rewriteCopy: '复制改写文案',
-          originalCountHint: '原文 {count} 字，点击“复制文案”可复制原文。',
+          originalCountHint: '音频文案 {count} 字，点击“复制文案”可复制视频里的音频文案。',
           rewrittenCountHint: '改写文案 {count} 字，可直接复制使用。',
           rewriteFallbackHint: 'AI 服务暂不可用，已生成本地仿写文案。',
           rewriteFailed: '改写失败，请稍后再试。',
+          rewriteNeedsTranscript: '音频文案转写完成后才能改写。',
           historyBack: '返回历史任务',
           historyDetailTitle: '任务详情',
           historyDetailLoading: '正在加载任务详情...',
@@ -3789,13 +3790,14 @@
           aiRewrite: 'AI Rewrite Copy',
           rewritePanelTitle: 'AI Rewritten Copy',
           rewritePanelBadge: 'Imitation Rewrite',
-          rewriteEmpty: 'Click “AI Rewrite Copy” on the left. The rewritten copy will appear here.',
+          rewriteEmpty: 'Click “AI Rewrite Copy” on the left. A one-to-one rewrite based on the audio transcript will appear here.',
           rewriteLoading: 'Rewriting copy...',
           rewriteCopy: 'Copy Rewritten Copy',
-          originalCountHint: 'Original copy: {count} characters. Use “Copy Script” to copy it.',
+          originalCountHint: 'Audio script: {count} characters. Use “Copy Script” to copy the spoken copy.',
           rewrittenCountHint: 'Rewritten copy: {count} characters. Ready to copy and use.',
           rewriteFallbackHint: 'AI provider is unavailable. A local imitation rewrite was generated.',
           rewriteFailed: 'Rewrite failed. Please try again later.',
+          rewriteNeedsTranscript: 'Audio transcription must finish before rewriting.',
           historyBack: 'Back to history',
           historyDetailTitle: 'Task Details',
           historyDetailLoading: 'Loading task details...',
@@ -5019,6 +5021,7 @@
         const description = item.description || item.title || t('historyNoCopy');
         const script = item.scriptText || '';
         const scriptDisplay = script || t('historyNoCopy');
+        const hasScript = Boolean(script.trim());
         const audioAsset = item.assets?.mp3 || item.assets?.audio || item.assets?.bgm || '';
         const bgmAsset = item.assets?.bgm && item.assets.bgm !== audioAsset ? item.assets.bgm : '';
         const sectionTitle = (detail.items?.length || 0) > 1
@@ -5033,8 +5036,8 @@
               </div>
               <div class="history-detail-actions">
                 <button class="btn btn-primary" type="button" data-copy-text="${escapeHtml(description)}" onclick="copyFromDataset(this)">${t('copyContent')}</button>
-                <button class="btn btn-soft" type="button" data-copy-text="${escapeHtml(script)}" onclick="copyFromDataset(this)">${t('copyScript')}</button>
-                <button class="btn btn-soft ai-rewrite-btn" type="button" data-target="history-rewrite-${escapeHtml(item.id)}" data-copy-text="${escapeHtml(script)}" data-source-kind="transcript" onclick="rewriteHistoryDetail(this)">${t('aiRewrite')}</button>
+                <button class="btn btn-soft" type="button" data-copy-text="${escapeHtml(script)}" onclick="copyFromDataset(this)"${hasScript ? '' : ' disabled'}>${t('copyScript')}</button>
+                <button class="btn btn-soft ai-rewrite-btn" type="button" data-target="history-rewrite-${escapeHtml(item.id)}" data-copy-text="${escapeHtml(script)}" data-source-kind="transcript" onclick="rewriteHistoryDetail(this)"${hasScript ? '' : ' disabled'}>${t('aiRewrite')}</button>
               </div>
             </div>
             <div class="history-detail-copy">${escapeHtml(description)}</div>
@@ -5574,6 +5577,7 @@
         const statusNote = [videoQualityNote, transcription].filter(Boolean).join(' ');
         const rewriteId = `rewrite-${item.id}`;
         const sourceCount = countText(scriptText);
+        const hasScriptText = Boolean(scriptText.trim());
 
         return `
           <article class="result-card has-rewrite">
@@ -5593,14 +5597,14 @@
                   ${assetLink(bgmAsset, t('downloadBgm'))}
                   ${assetLink(assets.cover, t('downloadCover'))}
                   ${assetLink(assets.transcript, t('downloadTranscript'))}
-                  <button class="btn btn-soft ai-rewrite-btn" type="button" data-target="${escapeHtml(rewriteId)}" data-source-kind="transcript" onclick="rewriteFromDataset(this)">${t('aiRewrite')}</button>
+                  <button class="btn btn-soft ai-rewrite-btn" type="button" data-target="${escapeHtml(rewriteId)}" data-source-kind="transcript" onclick="rewriteFromDataset(this)"${hasScriptText ? '' : ' disabled'}>${t('aiRewrite')}</button>
                 </div>
                 ${itemWarning}
                 <div class="copy-block">
                   <div class="copy-row">
                     <span class="script-copy-text" title="${escapeHtml(scriptText)}">${escapeHtml(scriptText || t('noCopyText'))}</span>
                     <button class="btn btn-ghost" type="button" data-copy-text="${escapeHtml(parsed.title || '')}" onclick="copyFromDataset(this)">${t('copyTitle')}</button>
-                    <button class="btn btn-ghost script-copy-btn" type="button" data-copy-text="${escapeHtml(scriptText)}" onclick="copyFromDataset(this)">${t('copyScript')}</button>
+                    <button class="btn btn-ghost script-copy-btn" type="button" data-copy-text="${escapeHtml(scriptText)}" onclick="copyFromDataset(this)"${hasScriptText ? '' : ' disabled'}>${t('copyScript')}</button>
                   </div>
                   <div class="copy-hint">${t('originalCountHint', { count: sourceCount })}</div>
                 </div>
@@ -5648,11 +5652,10 @@
         }
         const card = button?.closest('.result-card');
         const scriptButton = card?.querySelector('.script-copy-btn');
-        const scriptPreview = card?.querySelector('.script-copy-text');
-        const sourceText = String(scriptButton?.dataset?.copyText || scriptPreview?.textContent || '').trim();
+        const sourceText = String(scriptButton?.dataset?.copyText || '').trim();
         const target = document.getElementById(button?.dataset?.target || '');
         if (!sourceText) {
-          showToast(t('copyEmpty'));
+          showToast(t('rewriteNeedsTranscript'));
           return;
         }
         if (!target) return;
@@ -5689,7 +5692,7 @@
         const sourceText = String(button?.dataset?.copyText || '').trim();
         const target = document.getElementById(button?.dataset?.target || '');
         if (!sourceText) {
-          showToast(t('copyEmpty'));
+          showToast(t('rewriteNeedsTranscript'));
           return;
         }
         if (!target) return;
