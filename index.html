@@ -723,16 +723,6 @@
         font-size: 18px;
       }
 
-      .rewrite-badge {
-        border-radius: 999px;
-        padding: 4px 9px;
-        color: #6d35dc;
-        background: #efe7ff;
-        font-size: 12px;
-        font-weight: 800;
-        white-space: nowrap;
-      }
-
       .rewrite-output {
         flex: 1;
         min-height: 220px;
@@ -3510,8 +3500,7 @@
           userDeleted: '用户已删除',
           aiRewrite: 'AI 智能改写文案',
           rewritePanelTitle: 'AI 改写文案',
-          rewritePanelBadge: '一比一仿写',
-          rewriteEmpty: '点击左侧“AI 智能改写文案”，这里会显示基于视频音频文案的一比一仿写。',
+          rewriteEmpty: '点击左侧“AI 智能改写文案”，这里会显示基于视频音频文案的改写结果。',
           rewriteLoading: '正在仿写文案...',
           rewriteCopy: '复制改写文案',
           originalCountHint: '音频文案 {count} 字，点击“复制文案”可复制视频里的音频文案。',
@@ -3789,8 +3778,7 @@
           userDeleted: 'User deleted',
           aiRewrite: 'AI Rewrite Copy',
           rewritePanelTitle: 'AI Rewritten Copy',
-          rewritePanelBadge: 'Imitation Rewrite',
-          rewriteEmpty: 'Click “AI Rewrite Copy” on the left. A one-to-one rewrite based on the audio transcript will appear here.',
+          rewriteEmpty: 'Click “AI Rewrite Copy” on the left. The rewritten copy based on the audio transcript will appear here.',
           rewriteLoading: 'Rewriting copy...',
           rewriteCopy: 'Copy Rewritten Copy',
           originalCountHint: 'Audio script: {count} characters. Use “Copy Script” to copy the spoken copy.',
@@ -5624,7 +5612,6 @@
                 <h3>${t('rewritePanelTitle')}</h3>
                 <p class="rewrite-hint">${t('rewrittenCountHint', { count: 0 })}</p>
               </div>
-              <span class="rewrite-badge">${t('rewritePanelBadge')}</span>
             </div>
             <div class="rewrite-output is-empty">${t('rewriteEmpty')}</div>
             <div class="rewrite-actions">
