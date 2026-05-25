@@ -3,6 +3,7 @@ node_modules/
 .env
 data/
 tmp/
+.well-known/
 dist/
 .deploy/
 npm-debug.log*
