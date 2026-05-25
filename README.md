@@ -43,6 +43,20 @@ TIKHUB_API_KEY=你的_TikHub_API_Key
 DOUYIN_PROVIDERS=tikhub,xinyew,mxin,jxcxin,devtool
 ```
 
+## 生产解析速度
+
+如果线上更看重“快速返回解析结果”，建议关闭同步媒体后处理：
+
+```env
+AUTO_MEDIA_PROCESSING=false
+ENABLE_VIDEO_OPTIMIZE=false
+PROVIDER_REQUEST_TIMEOUT_MS=4500
+REDIRECT_FAST_BUDGET_MS=500
+PARSE_PROVIDER_CONCURRENCY=6
+```
+
+关闭后，页面会优先返回标题、作者、封面、无水印视频和 BGM 的下载入口；服务器不再为每个任务立即下载视频、转码 MP3 或调用转写接口。Provider 耗时会输出到 PM2 日志，便于排查慢接口。
+
 ## 转写配置
 
 复制 `.env.example` 为 `.env` 后按需配置：

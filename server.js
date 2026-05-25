@@ -110,6 +110,8 @@ const RATE_LIMIT_POLICIES = {
 };
 const ALLOW_WATERMARK_FALLBACK = String(process.env.ALLOW_WATERMARK_FALLBACK || '').toLowerCase() === 'true';
 const ENABLE_VIDEO_OPTIMIZE = String(process.env.ENABLE_VIDEO_OPTIMIZE ?? 'true').toLowerCase() !== 'false';
+const AUTO_MEDIA_PROCESSING = String(process.env.AUTO_MEDIA_PROCESSING ?? 'true').toLowerCase() !== 'false';
+const LOG_PROVIDER_TIMINGS = String(process.env.LOG_PROVIDER_TIMINGS ?? 'true').toLowerCase() !== 'false';
 const VIDEO_OPTIMIZE_CRF = clamp(Number(process.env.VIDEO_OPTIMIZE_CRF || 18), 14, 28);
 const VIDEO_OPTIMIZE_PRESET = process.env.VIDEO_OPTIMIZE_PRESET || 'medium';
 const PROVIDER_REQUEST_TIMEOUT_MS = clamp(Number(process.env.PROVIDER_REQUEST_TIMEOUT_MS || 9000), 3000, 30000);
@@ -664,7 +666,9 @@ app.get('/api/health', (_req, res) => {
       redirectTimeoutMs: REDIRECT_TIMEOUT_MS,
       redirectFastBudgetMs: REDIRECT_FAST_BUDGET_MS,
       parseProviderConcurrency: PARSE_PROVIDER_CONCURRENCY,
-      parseCacheTtlMinutes: Math.round(PARSE_CACHE_TTL_MS / 60000)
+      parseCacheTtlMinutes: Math.round(PARSE_CACHE_TTL_MS / 60000),
+      autoMediaProcessing: AUTO_MEDIA_PROCESSING,
+      videoOptimizeEnabled: ENABLE_VIDEO_OPTIMIZE
     },
     commercial: {
       enabled: COMMERCIAL_MODE,
@@ -2054,6 +2058,21 @@ async function processJob(job) {
         item.assets.bgm = registerRemoteAsset(job, item, 'bgm', parsed.musicUrl, `${safeFilename(parsed.musicTitle || parsed.title)}-bgm.mp3`, 'audio/mpeg');
       }
 
+      if (!AUTO_MEDIA_PROCESSING) {
+        item.status = 'done';
+        item.stage = '已解析';
+        item.videoOptimization = {
+          status: 'skipped',
+          reason: '已启用快速解析模式，保留原始视频下载地址。'
+        };
+        item.transcription = {
+          status: 'skipped',
+          reason: '已启用快速解析模式，跳过 MP3 和转写生成。'
+        };
+        updateJobProgress(job, index, 1);
+        continue;
+      }
+
       item.status = 'media';
       item.stage = ENABLE_VIDEO_OPTIMIZE ? '正在生成高清优化视频' : '正在生成 MP3';
       updateJobProgress(job, index, 0.42);
@@ -2248,15 +2267,19 @@ function firstSuccessfulProviderAttempt(attempts, originalUrl, candidateUrls) {
         const attempt = attempts[cursor];
         cursor += 1;
         inflight += 1;
+        const attemptStartedAt = Date.now();
 
         attempt.provider(attempt.candidateUrl, { originalUrl, candidateUrls })
           .then((parsed) => {
             if (settled) return;
             settled = true;
+            logProviderTiming('ok', attempt, Date.now() - attemptStartedAt);
             resolve({ parsed, provider: attempt.provider, candidateUrl: attempt.candidateUrl });
           })
           .catch((error) => {
-            failures.push(`${attempt.provider.providerName}: ${error.message || '解析失败'}`);
+            const message = error.message || '解析失败';
+            failures.push(`${attempt.provider.providerName}: ${message}`);
+            logProviderTiming('failed', attempt, Date.now() - attemptStartedAt, message);
           })
           .finally(() => {
             inflight -= 1;
@@ -2267,6 +2290,22 @@ function firstSuccessfulProviderAttempt(attempts, originalUrl, candidateUrls) {
 
     launch();
   });
+}
+
+function logProviderTiming(status, attempt, ms, message = '') {
+  if (!LOG_PROVIDER_TIMINGS) return;
+  const providerName = attempt.provider.providerName || attempt.provider.providerKey || 'provider';
+  const host = safeUrlHost(attempt.candidateUrl);
+  const suffix = message ? ` reason="${String(message).slice(0, 160)}"` : '';
+  console.info(`[parse-provider] status=${status} provider=${providerName} host=${host} ms=${ms}${suffix}`);
+}
+
+function safeUrlHost(value) {
+  try {
+    return new URL(value).host;
+  } catch {
+    return 'unknown';
+  }
 }
 
 async function getCandidateUrlsFast(url) {
