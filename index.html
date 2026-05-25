@@ -5017,7 +5017,7 @@
 
       function renderHistoryDetailItem(item, detail, index) {
         const description = item.description || item.title || t('historyNoCopy');
-        const script = item.scriptText || item.description || '';
+        const script = item.scriptText || item.description || item.title || '';
         const scriptDisplay = script || t('historyNoCopy');
         const audioAsset = item.assets?.mp3 || item.assets?.audio || item.assets?.bgm || '';
         const bgmAsset = item.assets?.bgm && item.assets.bgm !== audioAsset ? item.assets.bgm : '';
@@ -5523,7 +5523,7 @@
 
       function renderItem(item) {
         const itemAssets = item.assets || {};
-        const hasAnyAsset = Boolean(itemAssets.video || itemAssets.mp3 || itemAssets.bgm || itemAssets.cover || itemAssets.transcript);
+        const hasAnyAsset = Boolean(itemAssets.video || itemAssets.mp3 || itemAssets.audio || itemAssets.bgm || itemAssets.cover || itemAssets.transcript);
 
         if (item.status === 'failed' && !hasAnyAsset) {
           return `
@@ -5551,8 +5551,10 @@
 
         const parsed = item.parsed || {};
         const assets = itemAssets;
+        const videoProxySrc = assets.video ? apiUrl(`/api/download/${assets.video}?inline=1`) : '';
+        const directVideoSrc = parsed.videoUrl || '';
         const media = assets.video
-          ? `<video controls playsinline preload="metadata" poster="${assets.cover ? apiUrl(`/api/download/${assets.cover}?inline=1`) : ''}" src="${apiUrl(`/api/download/${assets.video}?inline=1`)}"></video>`
+          ? `<video controls playsinline preload="metadata" poster="${assets.cover ? apiUrl(`/api/download/${assets.cover}?inline=1`) : ''}">${directVideoSrc ? `<source src="${escapeHtml(directVideoSrc)}" type="video/mp4">` : ''}<source src="${escapeHtml(videoProxySrc)}" type="video/mp4"></video>`
           : assets.cover
             ? `<img alt="视频封面" src="${apiUrl(`/api/download/${assets.cover}?inline=1`)}">`
             : '';
@@ -5562,7 +5564,7 @@
         const itemWarning = item.status === 'failed' && item.error
           ? `<p class="error-text">${t('partialFailed')}：${escapeHtml(item.error)}</p>`
           : '';
-        const scriptText = item.scriptText || (parsed.description && parsed.description !== parsed.title ? parsed.description : '') || '';
+        const scriptText = item.scriptText || parsed.description || parsed.title || '';
         const audioAsset = assets.mp3 || assets.audio || assets.bgm || '';
         const bgmAsset = assets.bgm && assets.bgm !== audioAsset ? assets.bgm : '';
         const videoLabel = item.videoOptimization?.status === 'ok' ? t('downloadHdVideo') : t('downloadVideo');

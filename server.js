@@ -111,6 +111,7 @@ const RATE_LIMIT_POLICIES = {
 const ALLOW_WATERMARK_FALLBACK = String(process.env.ALLOW_WATERMARK_FALLBACK || '').toLowerCase() === 'true';
 const ENABLE_VIDEO_OPTIMIZE = String(process.env.ENABLE_VIDEO_OPTIMIZE ?? 'true').toLowerCase() !== 'false';
 const AUTO_MEDIA_PROCESSING = String(process.env.AUTO_MEDIA_PROCESSING ?? 'true').toLowerCase() !== 'false';
+const ENABLE_AUDIO_EXTRACTION = String(process.env.ENABLE_AUDIO_EXTRACTION ?? 'true').toLowerCase() !== 'false';
 const LOG_PROVIDER_TIMINGS = String(process.env.LOG_PROVIDER_TIMINGS ?? 'true').toLowerCase() !== 'false';
 const VIDEO_OPTIMIZE_CRF = clamp(Number(process.env.VIDEO_OPTIMIZE_CRF || 18), 14, 28);
 const VIDEO_OPTIMIZE_PRESET = process.env.VIDEO_OPTIMIZE_PRESET || 'medium';
@@ -680,6 +681,7 @@ app.get('/api/health', (_req, res) => {
       parseProviderConcurrency: PARSE_PROVIDER_CONCURRENCY,
       parseCacheTtlMinutes: Math.round(PARSE_CACHE_TTL_MS / 60000),
       autoMediaProcessing: AUTO_MEDIA_PROCESSING,
+      audioExtractionEnabled: ENABLE_AUDIO_EXTRACTION,
       videoOptimizeEnabled: ENABLE_VIDEO_OPTIMIZE
     },
     commercial: {
@@ -1528,7 +1530,7 @@ function publicHistoryItemFromEntry(entry, index) {
     status: String(saved.status || entry.status),
     title: String(saved.title || entry.titles[index] || ''),
     description: String(saved.description || entry.descriptions[index] || saved.title || entry.titles[index] || ''),
-    scriptText: String(saved.scriptText || textIfDifferent(saved.description, saved.title || entry.titles[index]) || ''),
+    scriptText: String(saved.scriptText || saved.description || entry.descriptions[index] || saved.title || entry.titles[index] || ''),
     coverUrl: String(saved.coverUrl || entry.coverUrls[index] || localHistoryCoverUrl(entry.jobId, index)),
     author: String(saved.author || ''),
     provider: String(saved.provider || 'douyin'),
@@ -2098,21 +2100,33 @@ async function processJob(job) {
         item.assets.video = sourceVideoAssetId;
       }
       if (parsed.musicUrl) {
-        const audioAssetId = registerRemoteAsset(job, item, 'audio', parsed.musicUrl, `${safeFilename(parsed.musicTitle || parsed.title)}-audio.mp3`, 'audio/mpeg');
-        item.assets.audio = audioAssetId;
-        item.assets.bgm = audioAssetId;
+        item.assets.bgm = registerRemoteAsset(job, item, 'bgm', parsed.musicUrl, `${safeFilename(parsed.musicTitle || parsed.title)}-bgm.mp3`, 'audio/mpeg');
       }
 
       if (!AUTO_MEDIA_PROCESSING) {
+        if (ENABLE_AUDIO_EXTRACTION && sourceVideoAssetId) {
+          item.status = 'media';
+          item.stage = '正在生成音频';
+          updateJobProgress(job, index, 0.68);
+          try {
+            await generateAudioAsset(job, item, sourceVideoAssetId, parsed, itemDir);
+          } catch (error) {
+            item.audioExtraction = {
+              status: 'skipped',
+              reason: error.message || '音频生成失败。'
+            };
+          }
+        }
+
         item.status = 'done';
-        item.stage = '已解析';
+        item.stage = item.assets.audio ? '已解析，音频已生成' : '已解析';
         item.videoOptimization = {
           status: 'skipped',
           reason: '已启用快速解析模式，保留原始视频下载地址。'
         };
         item.transcription = {
           status: 'skipped',
-          reason: '已启用快速解析模式，跳过 MP3 和转写生成。'
+          reason: '已启用快速解析模式，跳过文案转写。'
         };
         updateJobProgress(job, index, 1);
         continue;
@@ -2157,9 +2171,7 @@ async function processJob(job) {
 
           item.stage = '正在生成 MP3';
           updateJobProgress(job, index, 0.62);
-          const mp3Path = join(itemDir, 'audio.mp3');
-          await runFfmpeg(videoAsset.localPath, mp3Path);
-          item.assets.mp3 = registerLocalAsset(job, item, 'mp3', mp3Path, `${safeFilename(parsed.title)}.mp3`, 'audio/mpeg');
+          await generateAudioAsset(job, item, sourceVideoAssetId || item.assets.video, parsed, itemDir);
         } catch (error) {
           mp3Error = error.message || 'MP3 生成失败。';
         }
@@ -2795,6 +2807,23 @@ async function ensureAssetLocal(asset, jobId, itemId, preferredName = '') {
   return localPath;
 }
 
+async function generateAudioAsset(job, item, videoAssetId, parsed = {}, itemDir = '') {
+  const videoAsset = assets.get(videoAssetId || item.assets?.video);
+  if (!videoAsset) {
+    throw new Error('没有可用于提取音频的视频。');
+  }
+  await ensureAssetLocal(videoAsset, job.id, item.id, 'source.mp4');
+  const targetDir = itemDir || join(TMP_ROOT, job.id, item.id);
+  await mkdir(targetDir, { recursive: true });
+  const mp3Path = join(targetDir, 'audio.mp3');
+  await runFfmpeg(videoAsset.localPath, mp3Path);
+  const audioAssetId = registerLocalAsset(job, item, 'audio', mp3Path, `${safeFilename(parsed.title || item.id)}-audio.mp3`, 'audio/mpeg');
+  item.assets.audio = audioAssetId;
+  item.assets.mp3 = audioAssetId;
+  item.audioExtraction = { status: 'ok' };
+  return audioAssetId;
+}
+
 async function downloadRemote(remoteUrl, targetPath) {
   const response = await fetchWithTimeout(remoteUrl, { headers: requestHeaders() }, 90000);
   if (!response.ok || !response.body) {
@@ -3306,6 +3335,7 @@ function toPublicJob(job) {
       cached: Boolean(item.parsed?.cached),
       assets: item.assets,
       scriptText: item.scriptText,
+      audioExtraction: item.audioExtraction,
       videoOptimization: item.videoOptimization,
       transcription: item.transcription
     }))
@@ -3334,16 +3364,10 @@ function copyTextFromParsed(parsed = {}) {
   return firstText(
     parsed.scriptText,
     parsed.transcriptText,
-    textIfDifferent(parsed.description, parsed.title),
+    parsed.description,
+    parsed.title,
     ''
   );
-}
-
-function textIfDifferent(value = '', compare = '') {
-  const text = String(value || '').trim();
-  if (!text) return '';
-  const other = String(compare || '').trim();
-  return other && text === other ? '' : text;
 }
 
 function clamp(value, min, max) {

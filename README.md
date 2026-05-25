@@ -49,6 +49,7 @@ DOUYIN_PROVIDERS=tikhub,xinyew,mxin,jxcxin,devtool
 
 ```env
 AUTO_MEDIA_PROCESSING=false
+ENABLE_AUDIO_EXTRACTION=true
 ENABLE_VIDEO_OPTIMIZE=false
 PROVIDER_REQUEST_TIMEOUT_MS=4500
 TIKHUB_SECONDARY_ENDPOINT_DELAY_MS=600
@@ -56,7 +57,7 @@ REDIRECT_FAST_BUDGET_MS=150
 PARSE_PROVIDER_CONCURRENCY=6
 ```
 
-关闭后，页面会优先返回标题、作者、封面、无水印视频和 BGM 的下载入口；服务器不再为每个任务立即下载视频、转码 MP3 或调用转写接口。Provider 耗时会输出到 PM2 日志，便于排查慢接口。
+关闭后，页面会优先返回标题、作者、封面、无水印视频和 BGM 的下载入口；当 ENABLE_AUDIO_EXTRACTION=true 时，服务器仍会从视频中生成独立音频下载按钮，但不再做高清视频优化或调用转写接口。Provider 耗时会输出到 PM2 日志，便于排查慢接口。
 
 ## 转写配置
 
