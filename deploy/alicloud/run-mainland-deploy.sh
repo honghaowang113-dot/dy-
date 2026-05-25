@@ -98,8 +98,7 @@ else
   PORT="$APP_PORT" PM2_HOME=/root/.pm2 pm2 start server.js --name clipflow --update-env
 fi
 PM2_HOME=/root/.pm2 pm2 save
-env PATH="$PATH" PM2_HOME=/root/.pm2 pm2 startup systemd -u root --hp /root >/tmp/pm2-startup.sh
-bash /tmp/pm2-startup.sh || true
+env PATH="$PATH" PM2_HOME=/root/.pm2 pm2 startup systemd -u root --hp /root || true
 
 echo "== 6. Nginx =="
 cat >/tmp/clipflow.nginx.conf <<EOF
