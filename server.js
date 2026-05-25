@@ -2418,10 +2418,9 @@ async function parseWithTikHub(url) {
     '/api/v1/douyin/app/v3/fetch_one_video_by_share_url',
     '/api/v1/douyin/web/fetch_one_video_by_share_url'
   ];
-  const failures = [];
 
-  for (const path of endpoints) {
-    try {
+  return firstSuccessfulPromise(endpoints.map((path) => (
+    (async () => {
       const endpoint = new URL(path, baseUrl);
       endpoint.searchParams.set('share_url', url);
       const json = await fetchJson(endpoint, {
@@ -2430,16 +2429,36 @@ async function parseWithTikHub(url) {
         }
       });
       return normalizeTikHubResponse(json);
-    } catch (error) {
-      failures.push(`${path}: ${error.message}`);
-    }
-  }
-
-  throw new Error(summarizeFailures(failures));
+    })().catch((error) => {
+      throw new Error(`${path}: ${error.message}`);
+    })
+  )));
 }
 parseWithTikHub.providerName = 'TikHub';
 parseWithTikHub.providerKey = 'tikhub';
 parseWithTikHub.isConfigured = () => Boolean(process.env.TIKHUB_API_KEY);
+
+function firstSuccessfulPromise(promises) {
+  return new Promise((resolve, reject) => {
+    const failures = [];
+    let pending = promises.length;
+    if (!pending) {
+      reject(new Error('No attempts configured.'));
+      return;
+    }
+    for (const promise of promises) {
+      promise
+        .then(resolve)
+        .catch((error) => {
+          failures.push(error.message || '请求失败');
+          pending -= 1;
+          if (pending === 0) {
+            reject(new Error(summarizeFailures(failures)));
+          }
+        });
+    }
+  });
+}
 
 function normalizeTikHubResponse(json) {
   const data = unwrapTikHubData(json);
