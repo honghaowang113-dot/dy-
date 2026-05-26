@@ -2678,6 +2678,7 @@ function normalizeTikHubResponse(json, platform = PLATFORM_BY_KEY.get('douyin'))
       data?.authorInfo?.nickname,
       data?.user?.nickname,
       data?.note_card?.user?.nickname,
+      data?.photo?.userName,
       data?.author_name,
       data?.nickname,
       data?.user_name,
@@ -2702,6 +2703,8 @@ function normalizeTikHubResponse(json, platform = PLATFORM_BY_KEY.get('douyin'))
       data?.contact?.head_url,
       data?.authorInfo?.headImgUrl,
       data?.note_card?.user?.avatar,
+      data?.photo?.headUrl,
+      data?.photo?.headUrls?.map((item) => item?.url),
       data?.avatar
     ),
     coverUrl: tikhubCoverUrl(data),
@@ -2714,8 +2717,8 @@ function normalizeTikHubResponse(json, platform = PLATFORM_BY_KEY.get('douyin'))
       data?.audio_url
     ),
     musicTitle: firstText(data?.music?.title, data?.music_title, data?.photo?.music?.name, ''),
-    publishedAt: firstText(data?.create_time, data?.createtime, data?.feedInfo?.createtime, ''),
-    likeCount: data?.statistics?.digg_count ?? data?.interact_info?.liked_count ?? data?.liked_count ?? data?.like_count ?? data?.feedInfo?.likeCountFmt ?? ''
+    publishedAt: firstText(data?.create_time, data?.createtime, data?.feedInfo?.createtime, data?.photo?.timestamp, ''),
+    likeCount: data?.statistics?.digg_count ?? data?.interact_info?.liked_count ?? data?.liked_count ?? data?.like_count ?? data?.feedInfo?.likeCountFmt ?? data?.photo?.likeCount ?? ''
   };
 }
 
