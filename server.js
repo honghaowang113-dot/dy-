@@ -116,7 +116,8 @@ const LOG_PROVIDER_TIMINGS = String(process.env.LOG_PROVIDER_TIMINGS ?? 'true').
 const VIDEO_OPTIMIZE_CRF = clamp(Number(process.env.VIDEO_OPTIMIZE_CRF || 18), 14, 28);
 const VIDEO_OPTIMIZE_PRESET = process.env.VIDEO_OPTIMIZE_PRESET || 'medium';
 const PROVIDER_REQUEST_TIMEOUT_MS = clamp(Number(process.env.PROVIDER_REQUEST_TIMEOUT_MS || 9000), 3000, 30000);
-const TIKHUB_SECONDARY_ENDPOINT_DELAY_MS = clamp(Number(process.env.TIKHUB_SECONDARY_ENDPOINT_DELAY_MS || 600), 0, PROVIDER_REQUEST_TIMEOUT_MS);
+const TIKHUB_REQUEST_TIMEOUT_MS = clamp(Number(process.env.TIKHUB_REQUEST_TIMEOUT_MS || Math.max(PROVIDER_REQUEST_TIMEOUT_MS, 12000)), 3000, 30000);
+const TIKHUB_SECONDARY_ENDPOINT_DELAY_MS = clamp(Number(process.env.TIKHUB_SECONDARY_ENDPOINT_DELAY_MS || 600), 0, TIKHUB_REQUEST_TIMEOUT_MS);
 const REDIRECT_TIMEOUT_MS = clamp(Number(process.env.REDIRECT_TIMEOUT_MS || 4500), 2000, 12000);
 const REDIRECT_FAST_BUDGET_MS = clamp(Number(process.env.REDIRECT_FAST_BUDGET_MS || 500), 100, 8000);
 const REDIRECT_MAX_HOPS = clamp(Number(process.env.REDIRECT_MAX_HOPS || 3), 1, 5);
@@ -699,6 +700,7 @@ app.get('/api/health', (_req, res) => {
       maxDownloadMb: Number(process.env.MAX_DOWNLOAD_MB || 200),
       jobTtlMinutes: Number(process.env.JOB_TTL_MINUTES || 120),
       providerTimeoutMs: PROVIDER_REQUEST_TIMEOUT_MS,
+      tikhubRequestTimeoutMs: TIKHUB_REQUEST_TIMEOUT_MS,
       tikhubSecondaryEndpointDelayMs: TIKHUB_SECONDARY_ENDPOINT_DELAY_MS,
       redirectTimeoutMs: REDIRECT_TIMEOUT_MS,
       redirectFastBudgetMs: REDIRECT_FAST_BUDGET_MS,
@@ -2495,6 +2497,7 @@ async function parseWithTikHub(url, context = {}) {
       const endpoint = new URL(spec.path, baseUrl);
       endpoint.searchParams.set(spec.param, url);
       const json = await fetchJson(endpoint, {
+        timeoutMs: TIKHUB_REQUEST_TIMEOUT_MS,
         headers: {
           Authorization: `Bearer ${process.env.TIKHUB_API_KEY}`
         }
@@ -2522,7 +2525,7 @@ function tikhubEndpointSpecs(platformKey) {
     ],
     kuaishou: [
       { path: '/api/v1/kuaishou/app/fetch_one_video_by_url', param: 'share_text' },
-      { path: '/api/v1/kuaishou/web/fetch_one_video_by_url', param: 'share_text' }
+      { path: '/api/v1/kuaishou/web/fetch_one_video_by_url', param: 'url' }
     ],
     wechat_channels: [
       { path: '/api/v1/wechat_channels/fetch_video_by_share_url', param: 'share_url' }
@@ -2564,6 +2567,7 @@ async function resolveTikHubWechatChannelsJson(shareJson, baseUrl) {
     endpoint.searchParams.set('exportId', exportId);
   }
   return fetchJson(endpoint, {
+    timeoutMs: TIKHUB_REQUEST_TIMEOUT_MS,
     headers: {
       Authorization: `Bearer ${process.env.TIKHUB_API_KEY}`
     }
