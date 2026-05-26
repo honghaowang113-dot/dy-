@@ -3,8 +3,8 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>ClipFlow 抖音内容提取</title>
-    <meta name="description" content="抖音公开内容链接提取、无水印视频下载、MP3 转换、BGM 下载和文案转写工具。">
+    <title>ClipFlow 多平台内容提取</title>
+    <meta name="description" content="抖音、视频号、小红书、快手公开视频链接提取、视频下载、音频下载和文案转写工具。">
     <style>
       :root {
         --bg: #f6f8f7;
@@ -2517,7 +2517,7 @@
           <span>ClipFlow</span>
         </a>
         <nav class="nav-links" aria-label="主导航">
-          <a href="#extract">抖音提取</a>
+          <a href="#extract">视频提取</a>
           <button class="nav-link-btn" id="membershipNavBtn" type="button">会员体系</button>
           <a href="#features">功能</a>
           <a href="#steps">步骤</a>
@@ -2562,11 +2562,11 @@
       <section class="hero">
         <div class="shell hero-grid">
           <div>
-            <h1>抖音视频链接提取与内容整理工具</h1>
-            <p class="hero-copy">粘贴一个或多个公开抖音分享链接，后端会解析无水印视频、封面、背景音乐，生成 MP3，并在配置转写服务后输出视频文案。</p>
+            <h1>短视频链接提取与内容整理工具</h1>
+            <p class="hero-copy">粘贴抖音、视频号、小红书、快手的公开视频链接，后端会解析视频、封面、背景音乐，生成音频，并在配置转写服务后输出视频文案。</p>
             <div id="extract" class="extractor">
               <div class="input-row">
-                <textarea id="urlInput" placeholder="粘贴抖音分享链接，支持多行批量处理&#10;例如：https://v.douyin.com/xxxxxx/"></textarea>
+                <textarea id="urlInput" placeholder="粘贴抖音、视频号、小红书、快手分享链接，支持多行批量处理&#10;例如：https://v.douyin.com/xxxxxx/"></textarea>
                 <div class="input-tools">
                   <button class="btn btn-ghost" id="pasteBtn" type="button">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M8 7h8"></path><path d="M8 11h8"></path><path d="M9 15h6"></path><path d="M9 3h6l1 2h3v16H5V5h3z"></path></svg>
@@ -2602,7 +2602,7 @@
               <h3>实时任务面板</h3>
               <p>解析、转码、转写和打包状态会在页面内持续更新。</p>
               <div class="metric-grid">
-                <div class="metric"><strong>MP4</strong><span>无水印视频</span></div>
+                <div class="metric"><strong>MP4</strong><span>视频下载</span></div>
                 <div class="metric"><strong>MP3</strong><span>音频提取</span></div>
                 <div class="metric"><strong>TXT</strong><span>文案转写</span></div>
                 <div class="metric"><strong>ZIP</strong><span>批量归档</span></div>
@@ -2642,7 +2642,7 @@
           <div class="features">
             <article class="feature">
               <div class="icon-box"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor"><path d="M14 3v4a2 2 0 0 0 2 2h4"></path><path d="M5 21V5a2 2 0 0 1 2-2h7l6 6v12z"></path></svg></div>
-              <h3>无水印视频</h3>
+              <h3>视频下载</h3>
               <p>统一解析 Provider 返回的视频地址，支持浏览器预览和后端代理下载。</p>
             </article>
             <article class="feature">
@@ -2674,7 +2674,7 @@
             <article class="step">
               <div class="step-number">1</div>
               <h3>复制公开链接</h3>
-              <p>从抖音分享面板复制视频链接，或粘贴包含链接的整段分享文案。</p>
+              <p>从抖音、视频号、小红书或快手分享面板复制视频链接，或粘贴包含链接的整段分享文案。</p>
             </article>
             <article class="step">
               <div class="step-number">2</div>
@@ -2758,7 +2758,7 @@
     <footer class="site-footer">
       <div class="shell footer-row">
         <div class="footer-brand">
-          <span>ClipFlow Douyin Extractor</span>
+          <span>ClipFlow Video Extractor</span>
           <a class="icp-link" href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">蜀ICP备2026026207号-1</a>
         </div>
         <div class="compliance-links" aria-label="合规页面">
@@ -3245,10 +3245,10 @@
       const shownQuotaNoticeJobs = new Set();
       const I18N = {
         zh: {
-          metaTitle: 'ClipFlow 抖音内容提取',
-          metaDescription: '抖音公开内容链接提取、无水印视频下载、MP3 转换、BGM 下载和文案转写工具。',
+          metaTitle: 'ClipFlow 多平台内容提取',
+          metaDescription: '抖音、视频号、小红书、快手公开视频链接提取、视频下载、音频下载和文案转写工具。',
           brandHome: 'ClipFlow 首页',
-          navExtract: '抖音提取',
+          navExtract: '视频提取',
           navMembership: '会员体系',
           navFeatures: '功能',
           navSteps: '步骤',
@@ -3258,16 +3258,16 @@
           menuProfile: '个人中心',
           menuAdmin: '用户管理',
           menuLogout: '退出登录',
-          heroTitle: '抖音视频链接提取与内容整理工具',
-          heroCopy: '粘贴一个或多个公开抖音分享链接，后端会解析无水印视频、封面、背景音乐，生成 MP3，并在配置转写服务后输出视频文案。',
-          inputPlaceholder: '粘贴抖音分享链接，支持多行批量处理\n例如：https://v.douyin.com/xxxxxx/',
+          heroTitle: '短视频链接提取与内容整理工具',
+          heroCopy: '粘贴抖音、视频号、小红书、快手的公开视频链接，后端会解析视频、封面、背景音乐，生成音频，并在配置转写服务后输出视频文案。',
+          inputPlaceholder: '粘贴抖音、视频号、小红书、快手分享链接，支持多行批量处理\n例如：https://v.douyin.com/xxxxxx/',
           paste: '粘贴',
           clear: '清空',
           limit: '游客可免注册体验 2 次；免费版每日 5 次、每月 150 次、单次 2 个链接；标准版和高级版单次 5 个链接。',
           providerLoading: '正在读取解析 Provider 状态...',
           panelTitle: '实时任务面板',
           panelCopy: '解析、转码、转写和打包状态会在页面内持续更新。',
-          metricVideo: '无水印视频',
+          metricVideo: '视频下载',
           metricMp3: '音频提取',
           metricTxt: '文案转写',
           metricZip: '批量归档',
@@ -3358,7 +3358,7 @@
           paymentStatusError: '订单状态查询失败，正在重试...',
           featuresTitle: '从链接到素材包',
           featuresCopy: '围绕短视频二次整理的常见流程设计，所有真实能力通过后端完成，浏览器不暴露 Provider 地址和密钥。',
-          featureVideoTitle: '无水印视频',
+          featureVideoTitle: '视频下载',
           featureVideoCopy: '统一解析 Provider 返回的视频地址，支持浏览器预览和后端代理下载。',
           featureAudioTitle: 'MP3 与 BGM',
           featureAudioCopy: '用 FFmpeg 从视频提取 MP3；如果 Provider 返回原声音乐，单独提供下载。',
@@ -3369,7 +3369,7 @@
           stepsTitle: '三步完成提取',
           stepsCopy: '流程尽量贴近工具型网站：输入、等待、下载。失败任务会保留错误原因，方便更换链接或 Provider。',
           step1Title: '复制公开链接',
-          step1Copy: '从抖音分享面板复制视频链接，或粘贴包含链接的整段分享文案。',
+          step1Copy: '从抖音、视频号、小红书或快手分享面板复制视频链接，或粘贴包含链接的整段分享文案。',
           step2Title: '提交解析任务',
           step2Copy: '后端校验域名、调用 Provider、下载素材并使用 FFmpeg 生成 MP3。',
           step3Title: '下载整理结果',
@@ -3443,7 +3443,7 @@
           historyEmpty: '暂无历史任务记录',
           historyNoTitle: '暂无标题',
           historyNoCopy: '暂无文案内容',
-          historyPlatform: 'douyin',
+          historyPlatform: '多平台',
           historyAgoJustNow: '刚刚',
           support: '帮助与支持',
           feedback: '提交反馈',
@@ -3523,10 +3523,10 @@
           historyMoreItems: '当前任务包含 {count} 个链接，下面展示每个链接的详情。'
         },
         en: {
-          metaTitle: 'ClipFlow Douyin Content Extractor',
-          metaDescription: 'Extract public Douyin links, download watermark-free video, convert MP3, download BGM, and transcribe scripts.',
+          metaTitle: 'ClipFlow Multi-Platform Content Extractor',
+          metaDescription: 'Extract public Douyin, WeChat Channels, Xiaohongshu, and Kuaishou video links, download video and audio, and transcribe scripts.',
           brandHome: 'ClipFlow home',
-          navExtract: 'Douyin',
+          navExtract: 'Video Extract',
           navMembership: 'Plans',
           navFeatures: 'Features',
           navSteps: 'Steps',
@@ -3536,9 +3536,9 @@
           menuProfile: 'Profile',
           menuAdmin: 'User Management',
           menuLogout: 'Log Out',
-          heroTitle: 'Douyin Video Link Extractor And Content Toolkit',
-          heroCopy: 'Paste one or more public Douyin share links. The backend extracts watermark-free video, cover images, background music, MP3 audio, and scripts when transcription is configured.',
-          inputPlaceholder: 'Paste Douyin share links. Multiple lines are supported.\nExample: https://v.douyin.com/xxxxxx/',
+          heroTitle: 'Short-Video Link Extractor And Content Toolkit',
+          heroCopy: 'Paste public Douyin, WeChat Channels, Xiaohongshu, or Kuaishou video links. The backend extracts video, cover images, background music, audio, and scripts when transcription is configured.',
+          inputPlaceholder: 'Paste Douyin, WeChat Channels, Xiaohongshu, or Kuaishou links. Multiple lines are supported.\nExample: https://v.douyin.com/xxxxxx/',
           paste: 'Paste',
           clear: 'Clear',
           limit: 'Guests get 2 no-registration trials. Free: 5/day, 150/month, batch up to 2 links. Standard and Pro: batch up to 5 links.',
@@ -3647,7 +3647,7 @@
           stepsTitle: 'Extract In Three Steps',
           stepsCopy: 'A focused tool workflow: input, wait, download. Failed items keep the error reason so you can retry with another link or provider.',
           step1Title: 'Copy Public Links',
-          step1Copy: 'Copy a video link from Douyin share panel, or paste the whole share text containing links.',
+          step1Copy: 'Copy a video link from Douyin, WeChat Channels, Xiaohongshu, or Kuaishou, or paste the whole share text containing links.',
           step2Title: 'Submit Extraction',
           step2Copy: 'The backend validates domains, calls providers, downloads assets, and uses FFmpeg to generate MP3.',
           step3Title: 'Download Results',
@@ -3721,7 +3721,7 @@
           historyEmpty: 'No task history yet',
           historyNoTitle: 'Untitled',
           historyNoCopy: 'No copy text',
-          historyPlatform: 'douyin',
+          historyPlatform: 'multi-platform',
           historyAgoJustNow: 'Just now',
           support: 'Help And Support',
           feedback: 'Send Feedback',
@@ -4931,7 +4931,7 @@
               scriptText: item.scriptText || '',
               coverUrl: assetPreviewUrl(item.assets?.cover) || parsed.coverUrl || historyCoverUrl(entry, index),
               author: parsed.author || '',
-              provider: parsed.provider || 'douyin',
+              provider: parsed.provider || '',
               publishedAt: parsed.publishedAt || '',
               likeCount: parsed.likeCount ?? '',
               assets: item.assets || {},
@@ -4963,7 +4963,7 @@
               scriptText: saved.scriptText || '',
               coverUrl: saved.coverUrl || historyCoverUrl(entry, index),
               author: saved.author || '',
-              provider: saved.provider || 'douyin',
+              provider: saved.provider || '',
               publishedAt: saved.publishedAt || '',
               likeCount: saved.likeCount || '',
               assets: {},
@@ -5305,24 +5305,25 @@
           const configured = payload.providers.filter((provider) => provider.available && provider.configured);
           const skipped = payload.providers.filter((provider) => provider.available && !provider.configured);
           const labels = configured.map((provider) => provider.label).join(' / ') || (currentLanguage === 'en' ? 'Not configured' : '未配置');
+          const platforms = (payload.limits?.supportedPlatforms || []).map((platform) => platform.label).join(' / ');
           if (currentLanguage === 'en') {
             const skippedText = skipped.length ? `; ${skipped.map((provider) => provider.label).join(' / ')} are missing tokens and will be skipped` : '';
-            providerStatus.textContent = `Active providers: ${labels}${skippedText}. Transcription is ${payload.transcription.configured ? 'configured' : 'not configured'} and does not affect video or audio downloads.`;
+            providerStatus.textContent = `Active providers: ${labels}${skippedText}. Supported platforms: Douyin / WeChat Channels / Xiaohongshu / Kuaishou. Transcription is ${payload.transcription.configured ? 'configured' : 'not configured'} and does not affect video or audio downloads.`;
           } else {
             const skippedText = skipped.length ? `；未配置 Token 的 ${skipped.map((provider) => provider.label).join(' / ')} 会自动跳过` : '';
-            providerStatus.textContent = `当前解析 Provider：${labels}${skippedText}。转写${payload.transcription.configured ? '已配置' : '未配置'}，不影响视频和音频下载。`;
+            providerStatus.textContent = `当前解析 Provider：${labels}${skippedText}。支持平台：${platforms || '抖音 / 视频号 / 小红书 / 快手'}。转写${payload.transcription.configured ? '已配置' : '未配置'}，不影响视频和音频下载。`;
           }
         } catch {
           providerStatus.textContent = currentLanguage === 'en'
-            ? 'Parsing depends on third-party providers. Transcription depends on backend environment variables; video, cover, BGM, MP3, and ZIP downloads still work without transcription.'
-            : '真实解析依赖第三方 Provider，转写依赖后端环境变量配置；未配置转写时仍可下载视频、封面、BGM、MP3 和 ZIP。';
+            ? 'Parsing depends on third-party providers. Supported platforms are Douyin, WeChat Channels, Xiaohongshu, and Kuaishou. Video, cover, BGM, audio, and ZIP downloads still work without transcription.'
+            : '真实解析依赖第三方 Provider，支持抖音、视频号、小红书、快手；未配置转写时仍可下载视频、封面、BGM、音频和 ZIP。';
         }
       }
 
       async function startExtraction() {
         const text = urlInput.value.trim();
         if (!text) {
-          showToast('请先粘贴抖音链接');
+          showToast(currentLanguage === 'en' ? 'Paste at least one supported video link first.' : '请先粘贴抖音、视频号、小红书或快手链接');
           urlInput.focus();
           return;
         }
@@ -5390,7 +5391,7 @@
           const objectUrl = URL.createObjectURL(blob);
           const anchor = document.createElement('a');
           anchor.href = objectUrl;
-          anchor.download = filenameFromDisposition(response.headers.get('content-disposition')) || `douyin-assets-${Date.now()}.zip`;
+          anchor.download = filenameFromDisposition(response.headers.get('content-disposition')) || `clipflow-assets-${Date.now()}.zip`;
           document.body.append(anchor);
           anchor.click();
           anchor.remove();
@@ -5575,6 +5576,7 @@
                 <h3>${escapeHtml(parsed.title || t('untitledVideo'))}</h3>
                 <div class="result-meta">
                   <span>${escapeHtml(parsed.author || t('unknownAuthor'))}</span>
+                  <span>${escapeHtml(parsed.platformLabel || parsed.platform || '')}</span>
                   <span>${escapeHtml(parsed.provider || 'Provider')}</span>
                   <span>${escapeHtml(parsed.publishedAt || '')}</span>
                   <span>${parsed.likeCount !== '' ? `${t('likes')} ${escapeHtml(String(parsed.likeCount))}` : ''}</span>

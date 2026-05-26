@@ -1,6 +1,6 @@
-# ClipFlow 抖音内容提取工具
+# ClipFlow 多平台内容提取工具
 
-一个功能等价、品牌微调的抖音内容提取页面。前端是单页 `index.html`，后端是 Node Express，支持公开抖音链接解析、无水印视频下载、封面下载、BGM 下载、FFmpeg 生成 MP3、可选云转写和 ZIP 打包。
+一个功能等价、品牌微调的短视频内容提取页面。前端是单页 `index.html`，后端是 Node Express，支持公开抖音、视频号、小红书、快手链接解析、视频下载、封面下载、BGM 下载、FFmpeg 生成 MP3、可选云转写和 ZIP 打包。
 
 ## 运行
 
@@ -17,30 +17,30 @@ Windows PowerShell 默认可能禁止 `npm.ps1`，因此建议使用 `npm.cmd`�
 
 ## 解析 Provider 配置
 
-后端会按 `DOUYIN_PROVIDERS` 的顺序依次尝试 Provider：
+后端会按 `PARSE_PROVIDERS` 的顺序依次尝试 Provider。旧的 `DOUYIN_PROVIDERS` 仍会被读取，便于兼容已有生产环境：
 
 ```env
-DOUYIN_PROVIDERS=tikhub,xinyew,mxin,jxcxin,devtool,makuo,mujie
+PARSE_PROVIDERS=tikhub,xinyew,mxin,jxcxin,devtool,makuo,mujie
 ```
 
 当前内置 Provider：
 
+- `tikhub`：需要 `TIKHUB_API_KEY`。支持抖音、视频号、小红书、快手；抖音优先调用 `/api/v1/douyin/app/v3/fetch_one_video_by_share_url`，小红书调用 `/api/v1/xiaohongshu/app_v2/get_video_note_detail`，快手调用 `/api/v1/kuaishou/app/fetch_one_video_by_url`，视频号调用 `/api/v1/wechat_channels/fetch_video_by_share_url`。
 - `xinyew`：免费接口，可能受可用性和证书状态影响。
 - `mxin`：免费接口，适合做兜底测试。
 - `jxcxin`：免费接口，当前稳定性一般。
 - `devtool`：免费接口，当前稳定性一般。
-- `tikhub`：需要 `TIKHUB_API_KEY`。端点来自 GitHub 项目 `TikHub/TikHub-Multi-Functional-Downloader`，优先调用 `/api/v1/douyin/app/v3/fetch_one_video_by_share_url`，再用 web 端点兜底。
 - `makuo`：需要 `MAKUO_TOKEN`。
 - `mujie`：需要 `MUJIE_KEY`。
 
-缺少密钥的 Token Provider 会自动跳过。生产环境建议优先购买并配置一个稳定 Provider，然后把它放在 `DOUYIN_PROVIDERS` 第一位。
+除 TikHub 外，其余内置免费 Provider 当前只作为抖音兜底。缺少密钥的 Token Provider 会自动跳过。生产环境建议优先购买并配置一个稳定 Provider，然后把它放在 `PARSE_PROVIDERS` 第一位。
 
 TikHub 示例：
 
 ```env
 TIKHUB_BASE_URL=https://api.tikhub.io
 TIKHUB_API_KEY=你的_TikHub_API_Key
-DOUYIN_PROVIDERS=tikhub,xinyew,mxin,jxcxin,devtool
+PARSE_PROVIDERS=tikhub,xinyew,mxin,jxcxin,devtool
 ```
 
 ## 生产解析速度
@@ -57,7 +57,7 @@ REDIRECT_FAST_BUDGET_MS=150
 PARSE_PROVIDER_CONCURRENCY=6
 ```
 
-关闭后，页面会优先返回标题、作者、封面、无水印视频和 BGM 的下载入口；当 ENABLE_AUDIO_EXTRACTION=true 时，服务器仍会从视频中生成独立音频下载按钮，并在转写服务已配置时生成可复制的视频音频文案，但不再做高清视频优化。Provider 耗时会输出到 PM2 日志，便于排查慢接口。
+关闭后，页面会优先返回标题、作者、封面、视频和 BGM 的下载入口；当 ENABLE_AUDIO_EXTRACTION=true 时，服务器仍会从视频中生成独立音频下载按钮，并在转写服务已配置时生成可复制的视频音频文案，但不再做高清视频优化。Provider 耗时会输出到 PM2 日志，便于排查慢接口。
 
 ## 转写配置
 
@@ -82,8 +82,8 @@ REWRITE_MAX_TOKENS=900
 ## API
 
 - `GET /api/health`：查看 Provider、转写和运行限制配置状态。
-- `GET /api/providers/test?url=抖音链接`：逐个测试 Provider，返回成功/失败原因，不执行下载和转码。
-- `POST /api/extract`：提交 `{ "text": "抖音分享文案或链接" }` 或 `{ "urls": ["https://v.douyin.com/..."] }`。
+- `GET /api/providers/test?url=视频链接`：逐个测试当前平台可用 Provider，返回成功/失败原因，不执行下载和转码。
+- `POST /api/extract`：提交 `{ "text": "抖音/视频号/小红书/快手分享文案或链接" }` 或 `{ "urls": ["https://v.douyin.com/..."] }`。
 - `GET /api/jobs/:id`：查询任务状态。
 - `GET /api/download/:assetId`：下载单个文件，追加 `?inline=1` 可用于预览。
 - `GET /api/jobs/:id/archive`：下载任务内全部可用文件的 ZIP。

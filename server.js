@@ -123,10 +123,37 @@ const REDIRECT_MAX_HOPS = clamp(Number(process.env.REDIRECT_MAX_HOPS || 3), 1, 5
 const MAX_CANDIDATE_URLS = clamp(Number(process.env.MAX_CANDIDATE_URLS || 2), 1, 6);
 const PARSE_PROVIDER_CONCURRENCY = clamp(Number(process.env.PARSE_PROVIDER_CONCURRENCY || 4), 1, 12);
 const PARSE_CACHE_TTL_MS = clamp(Number(process.env.PARSE_CACHE_TTL_MINUTES || 30), 1, 240) * 60 * 1000;
-const DEFAULT_DOUYIN_PROVIDERS = ['tikhub', 'xinyew', 'mxin', 'jxcxin', 'devtool', 'makuo', 'mujie'];
-const DOUYIN_PROVIDER_ORDER = parseProviderOrder(process.env.DOUYIN_PROVIDERS);
+const DEFAULT_PARSE_PROVIDERS = ['tikhub', 'xinyew', 'mxin', 'jxcxin', 'devtool', 'makuo', 'mujie'];
+const PARSE_PROVIDER_ORDER = parseProviderOrder(process.env.PARSE_PROVIDERS || process.env.DOUYIN_PROVIDERS);
 
-const allowedHostSuffixes = ['douyin.com', 'iesdouyin.com'];
+const PLATFORM_CONFIGS = [
+  {
+    key: 'douyin',
+    label: '抖音',
+    defaultTitle: 'douyin-video',
+    hostSuffixes: ['douyin.com', 'iesdouyin.com', 'amemv.com']
+  },
+  {
+    key: 'xiaohongshu',
+    label: '小红书',
+    defaultTitle: 'xiaohongshu-video',
+    hostSuffixes: ['xiaohongshu.com', 'xhslink.com', 'xhscdn.com']
+  },
+  {
+    key: 'kuaishou',
+    label: '快手',
+    defaultTitle: 'kuaishou-video',
+    hostSuffixes: ['kuaishou.com', 'kuaishou.cn', 'kwai.com', 'gifshow.com']
+  },
+  {
+    key: 'wechat_channels',
+    label: '视频号',
+    defaultTitle: 'wechat-channels-video',
+    hostSuffixes: ['weixin.qq.com', 'channels.weixin.qq.com', 'mp.weixin.qq.com', 'finder.video.qq.com', 'video.qq.com']
+  }
+];
+const PLATFORM_BY_KEY = new Map(PLATFORM_CONFIGS.map((platform) => [platform.key, platform]));
+const SUPPORTED_PLATFORM_LABELS = PLATFORM_CONFIGS.map((platform) => platform.label).join('、');
 const jobs = new Map();
 const assets = new Map();
 const parseCache = new Map();
@@ -569,7 +596,7 @@ app.post('/api/extract', async (req, res) => {
   try {
     const urls = normalizeRequestUrls(req.body);
     if (urls.length === 0) {
-      return res.status(400).json({ error: '请粘贴至少一个抖音链接。' });
+      return res.status(400).json({ error: `请粘贴至少一个${SUPPORTED_PLATFORM_LABELS}链接。` });
     }
     const user = await getRequestUser(req);
     const guestQuota = user ? null : guestQuotaView(req);
@@ -667,6 +694,7 @@ app.get('/api/health', (_req, res) => {
       baseUrl: process.env.REWRITE_BASE_URL || 'https://api.siliconflow.cn/v1/chat/completions'
     },
     limits: {
+      supportedPlatforms: PLATFORM_CONFIGS.map((platform) => ({ key: platform.key, label: platform.label })),
       maxLinksPerJob: MAX_LINKS_PER_JOB,
       maxDownloadMb: Number(process.env.MAX_DOWNLOAD_MB || 200),
       jobTtlMinutes: Number(process.env.JOB_TTL_MINUTES || 120),
@@ -696,15 +724,17 @@ app.get('/api/health', (_req, res) => {
 
 app.get('/api/providers/test', async (req, res) => {
   try {
-    const targetUrl = validateDouyinUrl(String(req.query.url || ''));
+    const targetUrl = validateSupportedVideoUrl(String(req.query.url || ''));
+    const platform = detectPlatformFromUrl(targetUrl);
     const startedAt = Date.now();
     const candidateUrls = await getCandidateUrls(targetUrl);
     const results = await Promise.all(
-      getEnabledProviders().map((provider) => testProvider(provider, targetUrl, candidateUrls))
+      getEnabledProviders(platform.key).map((provider) => testProvider(provider, targetUrl, candidateUrls, platform))
     );
 
     res.json({
       url: targetUrl,
+      platform,
       candidateUrls,
       elapsedMs: Date.now() - startedAt,
       results
@@ -714,7 +744,16 @@ app.get('/api/providers/test', async (req, res) => {
   }
 });
 
-async function testProvider(provider, targetUrl, candidateUrls) {
+async function testProvider(provider, targetUrl, candidateUrls, platform = detectPlatformFromUrl(targetUrl)) {
+  if (!providerSupportsPlatform(provider, platform.key)) {
+    return {
+      provider: provider.providerName,
+      configured: Boolean(provider.isConfigured?.()),
+      status: 'skipped',
+      elapsedMs: 0,
+      message: `不支持${platform.label}。`
+    };
+  }
   if (!provider.isConfigured()) {
     return {
       provider: provider.providerName,
@@ -733,6 +772,7 @@ async function testProvider(provider, targetUrl, candidateUrls) {
       const parsed = await provider(candidateUrl, {
         originalUrl: targetUrl,
         candidateUrls,
+        platform,
         diagnostic: true,
         tikhubSecondaryEndpointDelayMs: 0
       });
@@ -817,7 +857,7 @@ app.get('/api/jobs/:id/archive', async (req, res) => {
   }
 
   res.setHeader('Content-Type', 'application/zip');
-  res.setHeader('Content-Disposition', contentDisposition(`douyin-assets-${job.id}.zip`));
+  res.setHeader('Content-Disposition', contentDisposition(`clipflow-assets-${job.id}.zip`));
   res.setHeader('Cache-Control', 'no-store');
 
   const archive = archiver('zip', { zlib: { level: 8 } });
@@ -870,7 +910,7 @@ app.use((_req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Douyin extractor running at http://localhost:${PORT}`);
+  console.log(`ClipFlow extractor running at http://localhost:${PORT}`);
 });
 
 setInterval(cleanExpiredJobs, 15 * 60 * 1000).unref();
@@ -1221,7 +1261,7 @@ function normalizeHistoryItems(items = []) {
       scriptText: String(item.scriptText || ''),
       coverUrl: String(item.coverUrl || ''),
       author: String(item.author || ''),
-      provider: String(item.provider || 'douyin'),
+      provider: String(item.provider || ''),
       publishedAt: String(item.publishedAt || ''),
       likeCount: item.likeCount === null || item.likeCount === undefined ? '' : String(item.likeCount),
       musicTitle: String(item.musicTitle || ''),
@@ -1507,7 +1547,7 @@ function publicHistoryItemFromJob(item, entry, index) {
     scriptText: String(item.scriptText || copyTextFromParsed(parsed) || ''),
     coverUrl: String(parsed.coverUrl || entry.coverUrls[index] || localHistoryCoverUrl(entry.jobId, index)),
     author: String(parsed.author || ''),
-    provider: String(parsed.provider || 'douyin'),
+    provider: String(parsed.provider || ''),
     publishedAt: String(parsed.publishedAt || ''),
     likeCount: parsed.likeCount === null || parsed.likeCount === undefined ? '' : String(parsed.likeCount),
     musicTitle: String(parsed.musicTitle || ''),
@@ -1529,7 +1569,7 @@ function publicHistoryItemFromEntry(entry, index) {
     scriptText: String(saved.scriptText || ''),
     coverUrl: String(saved.coverUrl || entry.coverUrls[index] || localHistoryCoverUrl(entry.jobId, index)),
     author: String(saved.author || ''),
-    provider: String(saved.provider || 'douyin'),
+    provider: String(saved.provider || ''),
     publishedAt: String(saved.publishedAt || ''),
     likeCount: saved.likeCount === null || saved.likeCount === undefined ? '' : String(saved.likeCount || ''),
     musicTitle: String(saved.musicTitle || ''),
@@ -2015,7 +2055,7 @@ function historyItemFromCompletedJobItem(item, index) {
     scriptText: String(item.scriptText || copyTextFromParsed(parsed) || ''),
     coverUrl: String(parsed.coverUrl || ''),
     author: String(parsed.author || ''),
-    provider: String(parsed.provider || 'douyin'),
+    provider: String(parsed.provider || ''),
     publishedAt: String(parsed.publishedAt || ''),
     likeCount: parsed.likeCount === null || parsed.likeCount === undefined ? '' : String(parsed.likeCount),
     musicTitle: String(parsed.musicTitle || ''),
@@ -2029,22 +2069,39 @@ function normalizeRequestUrls(body = {}) {
     : String(body.text || body.url || '');
   const found = raw.match(/https?:\/\/[^\s，,。]+/g) || [];
   const deduped = [...new Set(found.map((url) => url.replace(/[)\]}。,.，]+$/, '')))];
-  return deduped.map(validateDouyinUrl);
+  return deduped.map(validateSupportedVideoUrl);
 }
 
-function validateDouyinUrl(input) {
+function validateSupportedVideoUrl(input) {
   let parsed;
   try {
     parsed = new URL(input);
   } catch {
     throw new Error(`无效链接：${input}`);
   }
-  const host = parsed.hostname.toLowerCase();
-  const allowed = allowedHostSuffixes.some((suffix) => host === suffix || host.endsWith(`.${suffix}`));
-  if (!allowed) {
-    throw new Error(`仅支持抖音链接：${input}`);
+  const platform = detectPlatformFromUrl(parsed.toString());
+  if (!platform) {
+    throw new Error(`仅支持${SUPPORTED_PLATFORM_LABELS}链接：${input}`);
   }
   return parsed.toString();
+}
+
+function validateDouyinUrl(input) {
+  const url = validateSupportedVideoUrl(input);
+  const platform = detectPlatformFromUrl(url);
+  if (platform?.key !== 'douyin') {
+    throw new Error(`仅支持抖音链接：${input}`);
+  }
+  return url;
+}
+
+function detectPlatformFromUrl(input) {
+  try {
+    const host = new URL(input).hostname.toLowerCase();
+    return PLATFORM_CONFIGS.find((platform) => platform.hostSuffixes.some((suffix) => host === suffix || host.endsWith(`.${suffix}`))) || null;
+  } catch {
+    return null;
+  }
 }
 
 function createJob(urls, userId = '') {
@@ -2074,12 +2131,13 @@ async function processJob(job) {
 
   for (let index = 0; index < job.items.length; index += 1) {
     const item = job.items[index];
+    const platform = detectPlatformFromUrl(item.inputUrl) || PLATFORM_BY_KEY.get('douyin');
     try {
       item.status = 'parsing';
-      item.stage = '正在解析抖音链接';
+      item.stage = `正在解析${platform.label}链接`;
       updateJobProgress(job, index, 0.12);
 
-      const parsed = await parseDouyinFast(item.inputUrl);
+      const parsed = await parseVideoFast(item.inputUrl, platform);
       item.parsed = parsed;
       item.parseMs = Number(parsed.parseMs || 0);
       item.scriptText = buildScriptText(parsed);
@@ -2168,7 +2226,7 @@ async function processJob(job) {
             } catch (error) {
               item.videoOptimization = {
                 status: 'skipped',
-                reason: error.message || '高清优化失败，已保留原始无水印视频。'
+                reason: error.message || '高清优化失败，已保留原始视频。'
               };
             }
           }
@@ -2209,34 +2267,7 @@ async function processJob(job) {
 }
 
 async function parseDouyin(url) {
-  return parseDouyinFast(url);
-  const providers = getEnabledProviders();
-  const candidateUrls = await getCandidateUrls(url);
-  const failures = [];
-
-  for (const provider of providers) {
-    if (!provider.isConfigured()) {
-      failures.push(`${provider.providerName}: 未配置，已跳过`);
-      continue;
-    }
-
-    const providerFailures = [];
-    for (const candidateUrl of candidateUrls) {
-      try {
-        const parsed = await provider(candidateUrl, { originalUrl: url, candidateUrls });
-        return {
-          ...parsed,
-          sourceUrl: url,
-          resolvedUrl: candidateUrl
-        };
-      } catch (error) {
-        providerFailures.push(error.message);
-      }
-    }
-    failures.push(`${provider.providerName}: ${summarizeFailures(providerFailures)}`);
-  }
-
-  throw new Error(`解析服务不可用。${failures.slice(0, 8).join('；')}`);
+  return parseVideoFast(url, PLATFORM_BY_KEY.get('douyin'));
 }
 
 async function getCandidateUrls(url) {
@@ -2245,13 +2276,19 @@ async function getCandidateUrls(url) {
 }
 
 async function parseDouyinFast(url) {
-  const providers = getEnabledProviders();
+  return parseVideoFast(url, PLATFORM_BY_KEY.get('douyin'));
+}
+
+async function parseVideoFast(url, platform = detectPlatformFromUrl(url) || PLATFORM_BY_KEY.get('douyin')) {
+  const providers = getEnabledProviders(platform.key);
   const candidateUrls = await getCandidateUrlsFast(url);
   const cacheHit = getCachedParseResult([url, ...candidateUrls]);
   if (cacheHit) {
     return {
       ...cacheHit,
       sourceUrl: url,
+      platform: cacheHit.platform || platform.key,
+      platformLabel: cacheHit.platformLabel || platform.label,
       cached: true
     };
   }
@@ -2266,7 +2303,7 @@ async function parseDouyinFast(url) {
     }
 
     for (const candidateUrl of candidateUrls) {
-      attempts.push({ provider, candidateUrl });
+      attempts.push({ provider, candidateUrl, platform });
     }
   }
 
@@ -2276,6 +2313,8 @@ async function parseDouyinFast(url) {
       ...parsed,
       sourceUrl: url,
       resolvedUrl: candidateUrl,
+      platform: parsed.platform || platform.key,
+      platformLabel: parsed.platformLabel || platform.label,
       cached: false,
       parseMs: Date.now() - startedAt
     };
@@ -2285,7 +2324,7 @@ async function parseDouyinFast(url) {
     failures.push(...(error.failures || []));
   }
 
-  throw new Error(`解析服务不可用。${failures.slice(0, 8).join('；')}`);
+  throw new Error(`${platform.label}解析服务不可用。${failures.slice(0, 8).join('；')}`);
 }
 
 function firstSuccessfulProviderAttempt(attempts, originalUrl, candidateUrls) {
@@ -2313,7 +2352,7 @@ function firstSuccessfulProviderAttempt(attempts, originalUrl, candidateUrls) {
         inflight += 1;
         const attemptStartedAt = Date.now();
 
-        attempt.provider(attempt.candidateUrl, { originalUrl, candidateUrls })
+        attempt.provider(attempt.candidateUrl, { originalUrl, candidateUrls, platform: attempt.platform })
           .then((parsed) => {
             if (settled) return;
             settled = true;
@@ -2386,7 +2425,7 @@ async function expandRedirects(url) {
     current = new URL(location, current).toString();
     urls.push(current);
   }
-  return urls.map(validateDouyinUrl);
+  return urls.map(validateSupportedVideoUrl);
 }
 
 async function parseWithXinyew(url) {
@@ -2413,6 +2452,7 @@ async function parseWithXinyew(url) {
 }
 parseWithXinyew.providerName = 'Xinyew';
 parseWithXinyew.providerKey = 'xinyew';
+parseWithXinyew.supportedPlatforms = ['douyin'];
 parseWithXinyew.isConfigured = () => true;
 
 async function parseWithMxin(url) {
@@ -2438,35 +2478,56 @@ async function parseWithMxin(url) {
 }
 parseWithMxin.providerName = 'Mxin';
 parseWithMxin.providerKey = 'mxin';
+parseWithMxin.supportedPlatforms = ['douyin'];
 parseWithMxin.isConfigured = () => true;
 
 async function parseWithTikHub(url, context = {}) {
   const baseUrl = process.env.TIKHUB_BASE_URL || 'https://api.tikhub.io';
-  const endpoints = [
-    '/api/v1/douyin/app/v3/fetch_one_video_by_share_url',
-    '/api/v1/douyin/web/fetch_one_video_by_share_url'
-  ];
+  const platform = context.platform || detectPlatformFromUrl(context.originalUrl || url) || PLATFORM_BY_KEY.get('douyin');
+  const endpoints = tikhubEndpointSpecs(platform.key);
   const secondaryEndpointDelayMs = Number.isFinite(context.tikhubSecondaryEndpointDelayMs)
     ? context.tikhubSecondaryEndpointDelayMs
     : TIKHUB_SECONDARY_ENDPOINT_DELAY_MS;
 
-  return firstSuccessfulDelayed(endpoints.map((path) => ({
-    label: path,
+  return firstSuccessfulDelayed(endpoints.map((spec) => ({
+    label: `${spec.path}?${spec.param}`,
     run: async () => {
-      const endpoint = new URL(path, baseUrl);
-      endpoint.searchParams.set('share_url', url);
+      const endpoint = new URL(spec.path, baseUrl);
+      endpoint.searchParams.set(spec.param, url);
       const json = await fetchJson(endpoint, {
         headers: {
           Authorization: `Bearer ${process.env.TIKHUB_API_KEY}`
         }
       });
-      return normalizeTikHubResponse(json);
+      return normalizeTikHubResponse(json, platform);
     }
   })), secondaryEndpointDelayMs, (attempt, error) => `${attempt.label}: ${error.message}`);
 }
 parseWithTikHub.providerName = 'TikHub';
 parseWithTikHub.providerKey = 'tikhub';
+parseWithTikHub.supportedPlatforms = ['douyin', 'xiaohongshu', 'kuaishou', 'wechat_channels'];
 parseWithTikHub.isConfigured = () => Boolean(process.env.TIKHUB_API_KEY);
+
+function tikhubEndpointSpecs(platformKey) {
+  const map = {
+    douyin: [
+      { path: '/api/v1/douyin/app/v3/fetch_one_video_by_share_url', param: 'share_url' },
+      { path: '/api/v1/douyin/web/fetch_one_video_by_share_url', param: 'share_url' }
+    ],
+    xiaohongshu: [
+      { path: '/api/v1/xiaohongshu/app_v2/get_video_note_detail', param: 'share_text' }
+    ],
+    kuaishou: [
+      { path: '/api/v1/kuaishou/app/fetch_one_video_by_url', param: 'share_text' },
+      { path: '/api/v1/kuaishou/web/fetch_one_video_by_url', param: 'share_text' }
+    ],
+    wechat_channels: [
+      { path: '/api/v1/wechat_channels/fetch_video_by_share_url', param: 'share_url' },
+      { path: '/api/v1/wechat_channels/fetch_video_by_share_url', param: 'url' }
+    ]
+  };
+  return map[platformKey] || map.douyin;
+}
 
 function firstSuccessfulDelayed(tasks, delayMs = 0, formatFailure = (_task, error) => error.message || '请求失败') {
   return new Promise((resolve, reject) => {
@@ -2541,9 +2602,67 @@ function firstSuccessfulDelayed(tasks, delayMs = 0, formatFailure = (_task, erro
   });
 }
 
-function normalizeTikHubResponse(json) {
+function normalizeTikHubResponse(json, platform = PLATFORM_BY_KEY.get('douyin')) {
+  if (!isSuccessCode(json.code)) {
+    throw new Error(json.message || json.msg || `TikHub ${platform.label}解析失败。`);
+  }
   const data = unwrapTikHubData(json);
-  const videoUrl = firstUrl(
+  const videoUrl = tikhubVideoUrl(data, platform.key);
+  if (!videoUrl) {
+    throw new Error(json.message || json.msg || `TikHub 未返回${platform.label}视频地址。`);
+  }
+  return {
+    provider: 'TikHub',
+    platform: platform.key,
+    platformLabel: platform.label,
+    title: firstText(
+      data?.desc,
+      data?.title,
+      data?.note_card?.display_title,
+      data?.note_card?.title,
+      data?.photo?.caption,
+      data?.caption,
+      data?.object_desc?.description,
+      platform.defaultTitle
+    ),
+    author: firstText(
+      data?.author?.nickname,
+      data?.user?.nickname,
+      data?.note_card?.user?.nickname,
+      data?.author_name,
+      data?.nickname,
+      data?.user_name,
+      ''
+    ),
+    avatarUrl: firstUrl(data?.author?.avatar_thumb?.url_list, data?.author?.avatar_medium?.url_list),
+    description: firstText(
+      data?.desc,
+      data?.description,
+      data?.title,
+      data?.note_card?.desc,
+      data?.note_card?.display_title,
+      data?.photo?.caption,
+      data?.caption,
+      data?.object_desc?.description,
+      ''
+    ),
+    coverUrl: tikhubCoverUrl(data),
+    videoUrl,
+    musicUrl: firstUrl(
+      data?.music?.play_url?.url_list,
+      data?.music?.url,
+      data?.music_urls,
+      data?.photo?.music?.audioUrls,
+      data?.audio_url
+    ),
+    musicTitle: firstText(data?.music?.title, data?.music_title, data?.photo?.music?.name, ''),
+    publishedAt: firstText(data?.create_time, ''),
+    likeCount: data?.statistics?.digg_count ?? data?.interact_info?.liked_count ?? data?.liked_count ?? data?.like_count ?? ''
+  };
+}
+
+function tikhubVideoUrl(data = {}, platformKey = 'douyin') {
+  const explicit = firstUrl(
     data?.nwm_video_url,
     data?.no_watermark_url,
     data?.video?.nwm_video_url,
@@ -2555,25 +2674,111 @@ function normalizeTikHubResponse(json) {
     preferredVideoUrls(data?.video?.play_addr_lowbr?.url_list),
     data?.video_url,
     data?.video_urls,
+    data?.video?.url,
+    data?.video?.urls,
+    data?.video_info?.url,
+    data?.video_info?.urls,
+    data?.video_info?.media?.stream?.h264?.map?.((item) => item?.master_url || item?.backup_urls),
+    data?.video_info?.media?.stream?.h265?.map?.((item) => item?.master_url || item?.backup_urls),
+    data?.note_card?.video?.media?.stream?.h264?.map?.((item) => item?.master_url || item?.backup_urls),
+    data?.note_card?.video?.media?.stream?.h265?.map?.((item) => item?.master_url || item?.backup_urls),
+    data?.photo?.mainMvUrls?.map((item) => item?.url),
+    data?.photo?.videoResource?.h264?.adaptationSet?.flatMap((item) => item?.representation?.map((rep) => rep?.url)),
+    data?.photo?.videoResource?.hevc?.adaptationSet?.flatMap((item) => item?.representation?.map((rep) => rep?.url)),
+    data?.object_desc?.media?.map((item) => withUrlToken(item?.url, item?.url_token)),
     data?.url,
     ALLOW_WATERMARK_FALLBACK ? preferredVideoUrls(data?.video?.download_addr?.url_list) : null
   );
-  if (!videoUrl) {
-    throw new Error(json.message || json.msg || 'TikHub 未返回无水印视频地址。');
-  }
-  return {
-    provider: 'TikHub',
-    title: firstText(data?.desc, data?.title, 'douyin-video'),
-    author: firstText(data?.author?.nickname, data?.author_name, data?.nickname, ''),
-    avatarUrl: firstUrl(data?.author?.avatar_thumb?.url_list, data?.author?.avatar_medium?.url_list),
-    description: firstText(data?.desc, data?.title, ''),
-    coverUrl: firstUrl(data?.video?.cover?.url_list, data?.video?.origin_cover?.url_list, data?.cover),
-    videoUrl,
-    musicUrl: firstUrl(data?.music?.play_url?.url_list, data?.music?.url, data?.music_urls),
-    musicTitle: firstText(data?.music?.title, data?.music_title, ''),
-    publishedAt: firstText(data?.create_time, ''),
-    likeCount: data?.statistics?.digg_count ?? ''
+  if (explicit && isLikelyVideoUrl(explicit, 'video_url')) return explicit;
+
+  const candidates = collectUrlEntries(data)
+    .map((entry) => ({ ...entry, score: videoUrlCandidateScore(entry, platformKey) }))
+    .filter((entry) => entry.score < 100)
+    .sort((left, right) => left.score - right.score);
+  return candidates[0]?.url || explicit || '';
+}
+
+function tikhubCoverUrl(data = {}) {
+  return firstUrl(
+    data?.video?.cover?.url_list,
+    data?.video?.origin_cover?.url_list,
+    data?.cover,
+    data?.cover_url,
+    data?.note_card?.image_list?.[0]?.url_default,
+    data?.note_card?.image_list?.[0]?.url_pre,
+    data?.image_list?.[0]?.url,
+    data?.photo?.coverUrls?.map((item) => item?.url),
+    data?.object_desc?.media?.[0]?.cover_url
+  ) || collectUrlEntries(data)
+    .map((entry) => ({ ...entry, score: imageUrlCandidateScore(entry) }))
+    .filter((entry) => entry.score < 100)
+    .sort((left, right) => left.score - right.score)[0]?.url || '';
+}
+
+function withUrlToken(url, token) {
+  const cleanUrl = firstUrl(url);
+  const cleanToken = String(token || '').trim();
+  if (!cleanUrl || !cleanToken) return cleanUrl;
+  if (cleanUrl.includes(cleanToken)) return cleanUrl;
+  const separator = cleanUrl.includes('?') ? '&' : '?';
+  return `${cleanUrl}${separator}${cleanToken.replace(/^[?&]+/, '')}`;
+}
+
+function collectUrlEntries(value, path = []) {
+  const entries = [];
+  const visit = (current, currentPath) => {
+    if (Array.isArray(current)) {
+      current.forEach((item, index) => visit(item, currentPath.concat(String(index))));
+      return;
+    }
+    if (typeof current === 'string') {
+      const trimmed = current.trim();
+      if (/^https?:\/\//i.test(trimmed)) entries.push({ url: trimmed, path: currentPath.join('.') });
+      return;
+    }
+    if (current && typeof current === 'object') {
+      for (const [key, nested] of Object.entries(current)) {
+        visit(nested, currentPath.concat(key));
+      }
+    }
   };
+  visit(value, path);
+  return entries;
+}
+
+function videoUrlCandidateScore(entry, platformKey = 'douyin') {
+  const path = String(entry.path || '').toLowerCase();
+  const url = String(entry.url || '').toLowerCase();
+  if (!isLikelyVideoUrl(entry.url, path)) return 100;
+  let score = 50;
+  if (path.includes('nwm') || path.includes('no_watermark')) score -= 25;
+  if (path.includes('master') || path.includes('origin') || path.includes('mainmv') || path.includes('play')) score -= 12;
+  if (path.includes('h264') || path.includes('hevc') || path.includes('video') || path.includes('media')) score -= 8;
+  if (url.includes('.mp4')) score -= 8;
+  if (url.includes('.m3u8')) score += 5;
+  if (platformKey === 'wechat_channels' && path.includes('object_desc.media')) score -= 15;
+  return score;
+}
+
+function imageUrlCandidateScore(entry) {
+  const path = String(entry.path || '').toLowerCase();
+  const url = String(entry.url || '').toLowerCase();
+  if (path.includes('avatar') || path.includes('music') || path.includes('audio')) return 100;
+  if (!/(cover|image|thumb|poster|pic)/i.test(path) && !/\.(jpe?g|png|webp)(\?|$)/i.test(url)) return 100;
+  let score = 50;
+  if (path.includes('cover')) score -= 20;
+  if (path.includes('origin')) score -= 5;
+  return score;
+}
+
+function isLikelyVideoUrl(url, path = '') {
+  const lowerUrl = String(url || '').toLowerCase();
+  const lowerPath = String(path || '').toLowerCase();
+  if (!/^https?:\/\//i.test(String(url || ''))) return false;
+  if (/(avatar|cover|image|thumb|poster|music|audio|icon|logo|profile|nickname|comment|share|qrcode)/i.test(lowerPath)) return false;
+  if (/\.(jpe?g|png|webp|gif|mp3|m4a|aac|wav)(\?|$)/i.test(lowerUrl)) return false;
+  if (/\.(mp4|m3u8|mov)(\?|$)/i.test(lowerUrl)) return true;
+  return /(video|media|play|stream|master|h264|h265|hevc|mainmv|object_desc)/i.test(lowerPath);
 }
 
 async function parseWithMakuo(url) {
@@ -2606,6 +2811,7 @@ async function parseWithMakuo(url) {
 }
 parseWithMakuo.providerName = 'Makuo';
 parseWithMakuo.providerKey = 'makuo';
+parseWithMakuo.supportedPlatforms = ['douyin'];
 parseWithMakuo.isConfigured = () => Boolean(process.env.MAKUO_TOKEN);
 
 async function parseWithMujie(url) {
@@ -2634,6 +2840,7 @@ async function parseWithMujie(url) {
 }
 parseWithMujie.providerName = 'MuJie';
 parseWithMujie.providerKey = 'mujie';
+parseWithMujie.supportedPlatforms = ['douyin'];
 parseWithMujie.isConfigured = () => Boolean(process.env.MUJIE_KEY);
 
 async function parseWithJxcxin(url) {
@@ -2672,6 +2879,7 @@ async function parseWithJxcxin(url) {
 }
 parseWithJxcxin.providerName = 'Jxcxin';
 parseWithJxcxin.providerKey = 'jxcxin';
+parseWithJxcxin.supportedPlatforms = ['douyin'];
 parseWithJxcxin.isConfigured = () => true;
 
 async function parseWithDevTool(url) {
@@ -2709,6 +2917,7 @@ async function parseWithDevTool(url) {
 }
 parseWithDevTool.providerName = 'DevTool';
 parseWithDevTool.providerKey = 'devtool';
+parseWithDevTool.supportedPlatforms = ['douyin'];
 parseWithDevTool.isConfigured = () => true;
 
 async function fetchJson(url, options = {}) {
@@ -3349,13 +3558,13 @@ function toPublicJob(job) {
   };
 }
 
-function safeFilename(value = 'douyin-file') {
+function safeFilename(value = 'clipflow-file') {
   const cleaned = String(value)
     .replace(/[\\/:*?"<>|]/g, '-')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 90);
-  return cleaned || 'douyin-file';
+  return cleaned || 'clipflow-file';
 }
 
 function buildScriptText(parsed = {}) {
@@ -3385,25 +3594,26 @@ function parseProviderOrder(value) {
     .split(',')
     .map((name) => name.trim().toLowerCase())
     .filter(Boolean);
-  return names.length ? names : DEFAULT_DOUYIN_PROVIDERS;
+  return names.length ? names : DEFAULT_PARSE_PROVIDERS;
 }
 
-function getEnabledProviders() {
+function getEnabledProviders(platformKey = '') {
   const registry = providerRegistry();
-  return DOUYIN_PROVIDER_ORDER
+  return PARSE_PROVIDER_ORDER
     .map((name) => registry.get(name))
-    .filter(Boolean);
+    .filter((provider) => provider && (!platformKey || providerSupportsPlatform(provider, platformKey)));
 }
 
 function getProviderStatus() {
   const registry = providerRegistry();
-  return DOUYIN_PROVIDER_ORDER.map((name) => {
+  return PARSE_PROVIDER_ORDER.map((name) => {
     const provider = registry.get(name);
     return {
       name,
       label: provider?.providerName || name,
       available: Boolean(provider),
-      configured: Boolean(provider?.isConfigured?.())
+      configured: Boolean(provider?.isConfigured?.()),
+      platforms: (provider?.supportedPlatforms || PLATFORM_CONFIGS.map((platform) => platform.key)).map((key) => PLATFORM_BY_KEY.get(key)?.label || key)
     };
   });
 }
@@ -3420,12 +3630,32 @@ function providerRegistry() {
   ]);
 }
 
+function providerSupportsPlatform(provider, platformKey) {
+  const supported = provider?.supportedPlatforms || PLATFORM_CONFIGS.map((platform) => platform.key);
+  return supported.includes(platformKey);
+}
+
 function isSuccessCode(code) {
   return code === undefined || code === null || Number(code) === 0 || Number(code) === 1 || Number(code) === 200;
 }
 
 function unwrapTikHubData(json) {
-  const data = json.data?.data || json.data?.aweme_detail || json.data || json.aweme_detail || json;
+  const candidates = [
+    json.data?.data?.data,
+    json.data?.data?.aweme_detail,
+    json.data?.data?.item,
+    json.data?.data?.items,
+    json.data?.data,
+    json.data?.aweme_detail,
+    json.data?.item,
+    json.data?.items,
+    json.data,
+    json.aweme_detail,
+    json.item,
+    json.items,
+    json
+  ];
+  const data = candidates.find((item) => item !== undefined && item !== null) || {};
   if (Array.isArray(data)) return data[0] || {};
   return data;
 }
