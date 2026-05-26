@@ -5544,9 +5544,8 @@
         const parsed = item.parsed || {};
         const assets = itemAssets;
         const videoProxySrc = assets.video ? apiUrl(`/api/download/${assets.video}?inline=1`) : '';
-        const directVideoSrc = parsed.videoUrl || '';
         const media = assets.video
-          ? `<video controls playsinline preload="metadata" poster="${assets.cover ? apiUrl(`/api/download/${assets.cover}?inline=1`) : ''}">${directVideoSrc ? `<source src="${escapeHtml(directVideoSrc)}" type="video/mp4">` : ''}<source src="${escapeHtml(videoProxySrc)}" type="video/mp4"></video>`
+          ? `<video controls playsinline preload="metadata" poster="${assets.cover ? apiUrl(`/api/download/${assets.cover}?inline=1`) : ''}"><source src="${escapeHtml(videoProxySrc)}" type="video/mp4"></video>`
           : assets.cover
             ? `<img alt="视频封面" src="${apiUrl(`/api/download/${assets.cover}?inline=1`)}">`
             : '';

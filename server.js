@@ -2490,8 +2490,10 @@ async function parseWithTikHub(url, context = {}) {
   const secondaryEndpointDelayMs = Number.isFinite(context.tikhubSecondaryEndpointDelayMs)
     ? context.tikhubSecondaryEndpointDelayMs
     : TIKHUB_SECONDARY_ENDPOINT_DELAY_MS;
-
-  return firstSuccessfulDelayed(endpoints.map((spec) => ({
+  const directTasks = platform.key === 'wechat_channels'
+    ? tikhubWechatChannelsDetailTasks(url, baseUrl)
+    : [];
+  const shareTasks = endpoints.map((spec) => ({
     label: `${spec.path}?${spec.param}`,
     run: async () => {
       const endpoint = new URL(spec.path, baseUrl);
@@ -2507,7 +2509,13 @@ async function parseWithTikHub(url, context = {}) {
         : json;
       return normalizeTikHubResponse(detailJson, platform);
     }
-  })), secondaryEndpointDelayMs, (attempt, error) => `${attempt.label}: ${error.message}`);
+  }));
+
+  return firstSuccessfulDelayed(
+    directTasks.concat(shareTasks),
+    secondaryEndpointDelayMs,
+    (attempt, error) => `${attempt.label}: ${error.message}`
+  );
 }
 parseWithTikHub.providerName = 'TikHub';
 parseWithTikHub.providerKey = 'tikhub';
@@ -2532,6 +2540,73 @@ function tikhubEndpointSpecs(platformKey) {
     ]
   };
   return map[platformKey] || map.douyin;
+}
+
+function tikhubWechatChannelsDetailTasks(url, baseUrl) {
+  const params = wechatChannelsDetailParamsFromUrl(url);
+  if (!params) return [];
+  return [{
+    label: '/api/v1/wechat_channels/fetch_video_detail?mobile_url_params',
+    run: async () => {
+      const endpoint = new URL('/api/v1/wechat_channels/fetch_video_detail', baseUrl);
+      if (params.id) {
+        endpoint.searchParams.set('id', params.id);
+      } else {
+        endpoint.searchParams.set('exportId', params.exportId);
+      }
+      const json = await fetchJson(endpoint, {
+        timeoutMs: TIKHUB_REQUEST_TIMEOUT_MS,
+        headers: {
+          Authorization: `Bearer ${process.env.TIKHUB_API_KEY}`
+        }
+      });
+      return normalizeTikHubResponse(json, PLATFORM_BY_KEY.get('wechat_channels'));
+    }
+  }];
+}
+
+function wechatChannelsDetailParamsFromUrl(input) {
+  let parsed;
+  try {
+    parsed = new URL(input);
+  } catch {
+    return null;
+  }
+
+  const queryParts = [parsed.search];
+  if (parsed.hash) {
+    const hash = parsed.hash.replace(/^#/, '');
+    queryParts.push(hash.includes('?') ? hash.slice(hash.indexOf('?')) : hash);
+  }
+
+  for (const queryPart of queryParts) {
+    const params = new URLSearchParams(String(queryPart || '').replace(/^\?/, ''));
+    const exportId = firstText(
+      params.get('exportId'),
+      params.get('exportid'),
+      params.get('export_id'),
+      params.get('dynamicExportId'),
+      params.get('dynamic_export_id'),
+      params.get('feedExportId'),
+      params.get('feed_export_id'),
+      params.get('objectExportId'),
+      params.get('object_export_id')
+    );
+    const id = firstText(
+      params.get('id'),
+      params.get('feedId'),
+      params.get('feedid'),
+      params.get('feed_id'),
+      params.get('objectId'),
+      params.get('objectid'),
+      params.get('object_id'),
+      params.get('videoId'),
+      params.get('videoid'),
+      params.get('video_id')
+    );
+    if (exportId || id) return { exportId, id };
+  }
+  return null;
 }
 
 async function resolveTikHubWechatChannelsJson(shareJson, baseUrl) {
