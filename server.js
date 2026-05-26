@@ -2499,7 +2499,10 @@ async function parseWithTikHub(url, context = {}) {
           Authorization: `Bearer ${process.env.TIKHUB_API_KEY}`
         }
       });
-      return normalizeTikHubResponse(json, platform);
+      const detailJson = platform.key === 'wechat_channels'
+        ? await resolveTikHubWechatChannelsJson(json, baseUrl)
+        : json;
+      return normalizeTikHubResponse(detailJson, platform);
     }
   })), secondaryEndpointDelayMs, (attempt, error) => `${attempt.label}: ${error.message}`);
 }
@@ -2522,11 +2525,49 @@ function tikhubEndpointSpecs(platformKey) {
       { path: '/api/v1/kuaishou/web/fetch_one_video_by_url', param: 'share_text' }
     ],
     wechat_channels: [
-      { path: '/api/v1/wechat_channels/fetch_video_by_share_url', param: 'share_url' },
-      { path: '/api/v1/wechat_channels/fetch_video_by_share_url', param: 'url' }
+      { path: '/api/v1/wechat_channels/fetch_video_by_share_url', param: 'share_url' }
     ]
   };
   return map[platformKey] || map.douyin;
+}
+
+async function resolveTikHubWechatChannelsJson(shareJson, baseUrl) {
+  const shareData = unwrapTikHubData(shareJson);
+  if (tikhubVideoUrl(shareData, 'wechat_channels')) return shareJson;
+
+  const exportId = firstText(
+    shareJson?.data?.data?.sceneInfo?.dynamicExportId,
+    shareJson?.data?.data?.sceneInfo?.exportId,
+    shareJson?.data?.sceneInfo?.dynamicExportId,
+    shareJson?.data?.sceneInfo?.exportId,
+    shareData?.sceneInfo?.dynamicExportId,
+    shareData?.sceneInfo?.exportId,
+    shareData?.dynamicExportId,
+    shareData?.exportId,
+    ''
+  );
+  const id = firstText(
+    shareJson?.data?.data?.feedInfo?.id,
+    shareJson?.data?.feedInfo?.id,
+    shareData?.feedInfo?.id,
+    shareData?.id,
+    ''
+  );
+  if (!exportId && !id) {
+    throw new Error('TikHub 视频号分享接口未返回视频 ID 或 exportId。');
+  }
+
+  const endpoint = new URL('/api/v1/wechat_channels/fetch_video_detail', baseUrl);
+  if (id) {
+    endpoint.searchParams.set('id', id);
+  } else {
+    endpoint.searchParams.set('exportId', exportId);
+  }
+  return fetchJson(endpoint, {
+    headers: {
+      Authorization: `Bearer ${process.env.TIKHUB_API_KEY}`
+    }
+  });
 }
 
 function firstSuccessfulDelayed(tasks, delayMs = 0, formatFailure = (_task, error) => error.message || '请求失败') {
@@ -2618,15 +2659,19 @@ function normalizeTikHubResponse(json, platform = PLATFORM_BY_KEY.get('douyin'))
     title: firstText(
       data?.desc,
       data?.title,
+      data?.object_desc?.description,
+      data?.object_desc?.flow_card_desc?.description,
+      data?.feedInfo?.description,
       data?.note_card?.display_title,
       data?.note_card?.title,
       data?.photo?.caption,
       data?.caption,
-      data?.object_desc?.description,
       platform.defaultTitle
     ),
     author: firstText(
       data?.author?.nickname,
+      data?.contact?.nickname,
+      data?.authorInfo?.nickname,
       data?.user?.nickname,
       data?.note_card?.user?.nickname,
       data?.author_name,
@@ -2634,17 +2679,26 @@ function normalizeTikHubResponse(json, platform = PLATFORM_BY_KEY.get('douyin'))
       data?.user_name,
       ''
     ),
-    avatarUrl: firstUrl(data?.author?.avatar_thumb?.url_list, data?.author?.avatar_medium?.url_list),
     description: firstText(
       data?.desc,
       data?.description,
+      data?.object_desc?.description,
+      data?.object_desc?.flow_card_desc?.description,
+      data?.feedInfo?.description,
       data?.title,
       data?.note_card?.desc,
       data?.note_card?.display_title,
       data?.photo?.caption,
       data?.caption,
-      data?.object_desc?.description,
       ''
+    ),
+    avatarUrl: firstUrl(
+      data?.author?.avatar_thumb?.url_list,
+      data?.author?.avatar_medium?.url_list,
+      data?.contact?.head_url,
+      data?.authorInfo?.headImgUrl,
+      data?.note_card?.user?.avatar,
+      data?.avatar
     ),
     coverUrl: tikhubCoverUrl(data),
     videoUrl,
@@ -2656,8 +2710,8 @@ function normalizeTikHubResponse(json, platform = PLATFORM_BY_KEY.get('douyin'))
       data?.audio_url
     ),
     musicTitle: firstText(data?.music?.title, data?.music_title, data?.photo?.music?.name, ''),
-    publishedAt: firstText(data?.create_time, ''),
-    likeCount: data?.statistics?.digg_count ?? data?.interact_info?.liked_count ?? data?.liked_count ?? data?.like_count ?? ''
+    publishedAt: firstText(data?.create_time, data?.createtime, data?.feedInfo?.createtime, ''),
+    likeCount: data?.statistics?.digg_count ?? data?.interact_info?.liked_count ?? data?.liked_count ?? data?.like_count ?? data?.feedInfo?.likeCountFmt ?? ''
   };
 }
 
@@ -2708,7 +2762,11 @@ function tikhubCoverUrl(data = {}) {
     data?.note_card?.image_list?.[0]?.url_pre,
     data?.image_list?.[0]?.url,
     data?.photo?.coverUrls?.map((item) => item?.url),
-    data?.object_desc?.media?.[0]?.cover_url
+    data?.object_desc?.media?.[0]?.cover_url,
+    data?.object_desc?.media?.[0]?.full_cover_url,
+    data?.object_desc?.media?.[0]?.thumb_url,
+    data?.object_desc?.media?.[0]?.full_thumb_url,
+    data?.object_desc?.media?.[0]?.share_cover_url
   ) || collectUrlEntries(data)
     .map((entry) => ({ ...entry, score: imageUrlCandidateScore(entry) }))
     .filter((entry) => entry.score < 100)
